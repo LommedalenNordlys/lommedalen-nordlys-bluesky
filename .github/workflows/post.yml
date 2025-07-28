@@ -1,0 +1,36 @@
+name: "Post to Bluesky"
+
+on:
+  schedule:
+    - cron: "0 * * * *"  # Runs every hour at minute 0
+  workflow_dispatch:  # Allows manual triggering of the workflow
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3  # Checkout the repository
+
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
+
+      - run: npm ci  # Install dependencies using npm ci
+      - run: npm run build  # Run the build script
+
+      - name: Send post
+        run: npm start  # Execute the start script
+        env:
+          BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
+          BSKY_PASSWORD: ${{ secrets.BSKY_PASSWORD }}
+          KEY_GITHUB_TOKEN: ${{ secrets.KEY_GITHUB_TOKEN }}
