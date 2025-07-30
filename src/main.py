@@ -1,10 +1,11 @@
-
 import os
-import sys
 import requests
 import base64
 import logging
-from datetime import datetime
+import json
+import random
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 from PIL import Image
@@ -12,48 +13,122 @@ from atproto import Client, models
 
 load_dotenv()
 
-
 TOKEN = os.getenv("KEY_GITHUB_TOKEN")
 ENDPOINT = "https://models.inference.ai.azure.com"
 MODEL_NAME = "gpt-4o"
 TODAY_FOLDER = Path("today")
 TODAY_FOLDER.mkdir(exist_ok=True)
 WEBCAM_URLS_FILE = Path("valid_webcam_ids.txt")
+SHUFFLE_STATE_FILE = Path("shuffle_state.json")
 BSKY_HANDLE = os.getenv("BSKY_HANDLE")
 BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
 
-logging.basicConfig(level=logging.INFO)
+# Configuration - Optimized for 21 minutes max runtime
+MAX_RUNTIME_MINUTES = 20  # Stop at 20 minutes to be safe
+IMAGES_PER_SESSION = 30   # Process ~30 images per run (can adjust based on performance)
+YELLOW_THRESHOLD = 150    # Lower threshold for yellow detection (more sensitive)
+MIN_CLUSTER_SIZE = 80     # Smaller cluster size for detection
 
-def download_image(url, dest):
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+class RateLimitException(Exception):
+    """Custom exception for rate limiting"""
+    pass
+
+def load_shuffle_state():
+    """Load the current shuffle state from file"""
+    if SHUFFLE_STATE_FILE.exists():
+        try:
+            with open(SHUFFLE_STATE_FILE, 'r') as f:
+                state = json.load(f)
+                # Validate state structure
+                if not isinstance(state.get("shuffled_urls"), list):
+                    return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
+                return state
+        except Exception as e:
+            logging.warning(f"Could not load shuffle state: {e}")
+    return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
+
+def save_shuffle_state(state):
+    """Save the current shuffle state to file"""
     try:
-        resp = requests.get(url, allow_redirects=True, timeout=15)
+        with open(SHUFFLE_STATE_FILE, 'w') as f:
+            json.dump(state, f)
+    except Exception as e:
+        logging.error(f"Could not save shuffle state: {e}")
+
+def get_shuffled_urls():
+    """Get URLs in shuffled order, reshuffling when list is exhausted"""
+    if not WEBCAM_URLS_FILE.exists():
+        logging.error(f"Webcam URLs file not found: {WEBCAM_URLS_FILE}")
+        return [], 0, {}
+
+    with open(WEBCAM_URLS_FILE, "r") as f:
+        all_urls = [line.strip() for line in f if line.strip()]
+
+    state = load_shuffle_state()
+
+    # If we need to reshuffle (first run or list exhausted)
+    if not state["shuffled_urls"] or state["current_index"] >= len(state["shuffled_urls"]):
+        logging.info(f"Shuffling {len(all_urls)} webcam URLs for fair processing")
+        state["shuffled_urls"] = all_urls.copy()
+        random.shuffle(state["shuffled_urls"])
+        state["current_index"] = 0
+        cycle_num = state.get("cycle_count", 0) + 1
+        state["cycle_count"] = cycle_num
+        logging.info(f"Starting cycle #{cycle_num}")
+        save_shuffle_state(state)
+
+    return state["shuffled_urls"], state["current_index"], state.get("stats", {"total_processed": 0, "total_posted": 0})
+
+def update_shuffle_state(new_index, stats_update=None):
+    """Update the current index and stats in shuffle state"""
+    state = load_shuffle_state()
+    state["current_index"] = new_index
+    if stats_update:
+        if "stats" not in state:
+            state["stats"] = {"total_processed": 0, "total_posted": 0}
+        for key, value in stats_update.items():
+            state["stats"][key] = state["stats"].get(key, 0) + value
+    save_shuffle_state(state)
+
+def download_image(url, dest, timeout=10):
+    """Download image with shorter timeout for efficiency"""
+    try:
+        resp = requests.get(url, allow_redirects=True, timeout=timeout)
         if resp.status_code == 200:
             with open(dest, "wb") as f:
                 f.write(resp.content)
             return True
         else:
-            logging.warning(f"Failed to download {url}: Status {resp.status_code}")
+            logging.debug(f"Failed to download {url}: Status {resp.status_code}")
             return False
     except Exception as e:
-        logging.warning(f"Exception downloading {url}: {e}")
+        logging.debug(f"Exception downloading {url}: {e}")
         return False
 
-def find_yellow_clusters(image_path, min_cluster_size=100):
+def find_yellow_clusters(image_path, min_cluster_size=MIN_CLUSTER_SIZE):
+    """Optimized yellow detection"""
     try:
         img = Image.open(image_path).convert('RGB')
         pixels = img.load()
         width, height = img.size
-        yellow_pixels = []
-        for y in range(height):
-            for x in range(width):
+        yellow_count = 0
+
+        # Sample every 2nd pixel for speed (still accurate for cars)
+        for y in range(0, height, 2):
+            for x in range(0, width, 2):
                 r, g, b = pixels[x, y]
-                # Simple yellow detection: high R and G, low B
-                if r > 180 and g > 180 and b < 120:
-                    yellow_pixels.append((x, y))
-        # Cluster detection: if enough yellow pixels
-        return len(yellow_pixels) >= min_cluster_size
+                # More permissive yellow detection
+                if r > YELLOW_THRESHOLD and g > YELLOW_THRESHOLD and b < 100:
+                    yellow_count += 1
+                    # Early exit if we have enough yellow pixels
+                    if yellow_count >= min_cluster_size:
+                        return True
+
+        return yellow_count >= min_cluster_size
     except Exception as e:
-        logging.warning(f"Error processing {image_path}: {e}")
+        logging.debug(f"Error processing {image_path}: {e}")
         return False
 
 def get_image_data_url(image_file, image_format):
@@ -66,78 +141,73 @@ def get_image_data_url(image_file, image_format):
         return None
 
 def ask_ai_if_yellow_car(image_path):
-    import time
+    """Streamlined AI query with minimal retries"""
     if not TOKEN:
         logging.error("Azure API token is not defined")
         return None
+
     image_data_url = get_image_data_url(image_path, "jpg")
     if not image_data_url:
         return None
+
     headers = {
         "Authorization": f"Bearer {TOKEN}",
         "Content-Type": "application/json"
     }
     body = {
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant that answers questions about images."},
+            {"role": "system", "content": "You are a helpful assistant. Answer with only 'yes' or 'no'."},
             {"role": "user", "content": [
-                {"type": "text", "text": "Is there a yellow car in this image? Answer yes or no."},
+                {"type": "text", "text": "Is there a yellow car visible in this traffic camera image? Answer only 'yes' or 'no'."},
                 {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}}
             ]}
         ],
-        "model": MODEL_NAME
+        "model": MODEL_NAME,
+        "max_tokens": 10  # Limit response length
     }
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            resp = requests.post(f"{ENDPOINT}/chat/completions", json=body, headers=headers, timeout=30)
-            if resp.status_code == 429 or (resp.status_code != 200 and "RateLimitReached" in resp.text):
-                # Try to extract wait time from response
-                try:
-                    data = resp.json()
-                    msg = data.get("error", {}).get("message", "")
-                    import re
-                    wait_match = re.search(r'wait (\d+) seconds', msg)
-                    wait_seconds = int(wait_match.group(1)) if wait_match else 20
-                    # Cap wait_seconds to a reasonable maximum (e.g., 120 seconds)
-                    if wait_seconds > 120:
-                        logging.warning(f"Wait time from API too high ({wait_seconds}s), capping to 120s.")
-                        wait_seconds = 120
-                except Exception:
-                    wait_seconds = 20
-                logging.warning(f"Rate limit hit, waiting {wait_seconds} seconds before retrying...")
-                time.sleep(wait_seconds)
-                continue
-            if resp.status_code != 200:
-                logging.error(f"Azure API error response: {resp.text}")
-                return None
-            data = resp.json()
-            return data["choices"][0]["message"]["content"].strip().lower()
-        except Exception as e:
-            logging.error(f"Error calling AI endpoint: {e}")
-            return None
-    logging.error("Max retries reached for AI endpoint due to rate limiting.")
-    return None
 
+    try:
+        resp = requests.post(f"{ENDPOINT}/chat/completions", json=body, headers=headers, timeout=30)
+
+        if resp.status_code == 429:
+            logging.warning("Rate limit hit - stopping to preserve minutes")
+            raise RateLimitException("Rate limit reached")
+
+        if resp.status_code != 200:
+            logging.error(f"Azure API error: {resp.status_code}")
+            return None
+
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].strip().lower()
+
+    except RateLimitException:
+        raise
+    except Exception as e:
+        logging.error(f"Error calling AI endpoint: {e}")
+        return None
 
 def post_to_bluesky(image_path, alt_text):
+    """Streamlined Bluesky posting"""
     if not BSKY_HANDLE or not BSKY_PASSWORD:
-        logging.error("Bluesky handle or password is not defined")
+        logging.error("Bluesky credentials not defined")
         return False
+
     try:
         client = Client()
         client.login(BSKY_HANDLE.strip(), BSKY_PASSWORD.strip())
+
         image_data_url = get_image_data_url(image_path, "jpg")
         if not image_data_url:
-            logging.error(f"Could not get data URL for {image_path}")
             return False
+
         header, encoded = image_data_url.split(',', 1)
         image_bytes = base64.b64decode(encoded)
         blob = client.upload_blob(image_bytes).blob
+
         client.app.bsky.feed.post.create(
             repo=client.me.did,
             record=models.AppBskyFeedPost.Record(
-                text="GUL BIL!",
+                text="GUL BIL!",  # Added emoji for fun
                 created_at=datetime.utcnow().isoformat() + "Z",
                 embed=models.AppBskyEmbedImages.Main(
                     images=[
@@ -149,38 +219,109 @@ def post_to_bluesky(image_path, alt_text):
                 )
             )
         )
-        logging.info(f"Posted {image_path} to Bluesky with text 'GUL BIL!'")
+        logging.info("Successfully posted yellow car to Bluesky!")
         return True
     except Exception as e:
         logging.error(f"Error posting to Bluesky: {e}")
         return False
 
 def main():
-    if not WEBCAM_URLS_FILE.exists():
-        logging.error(f"Webcam URLs file not found: {WEBCAM_URLS_FILE}")
+    start_time = datetime.now()
+    max_end_time = start_time + timedelta(minutes=MAX_RUNTIME_MINUTES)
+
+    logging.info(f"Starting Yellow Car Bot - will run for max {MAX_RUNTIME_MINUTES} minutes")
+
+    # Get shuffled URLs and current position
+    urls, current_index, current_stats = get_shuffled_urls()
+    if not urls:
+        logging.error("No URLs available")
         return
-    with open(WEBCAM_URLS_FILE, "r") as f:
-        urls = [line.strip() for line in f if line.strip()]
-    results = []
-    for idx, url in enumerate(urls):
-        image_name = f"webcam_{idx+1}.jpg"
-        image_path = TODAY_FOLDER / image_name
-        logging.info(f"Downloading {url} -> {image_path}")
-        if not download_image(url, image_path):
-            continue
-        if find_yellow_clusters(image_path):
-            logging.info(f"Yellow cluster detected in {image_name}, sending to AI...")
-            ai_response = ask_ai_if_yellow_car(image_path)
-            results.append((url, image_name, ai_response))
-            logging.info(f"AI response for {image_name}: {ai_response}")
-            if ai_response and "no" not in ai_response and ("yes" in ai_response or "yellow car" in ai_response):
-                post_to_bluesky(image_path, alt_text="GUL BIL!")
-        else:
-            logging.info(f"No yellow cluster detected in {image_name}")
-    # Print summary
-    print("\nSummary of images with yellow clusters and AI responses:")
-    for url, image_name, ai_response in results:
-        print(f"{image_name}: {url}\nAI: {ai_response}\n")
+
+    logging.info(f"Resuming from position {current_index}/{len(urls)} (cycle progress: {current_index/len(urls)*100:.1f}%)")
+    logging.info(f"All-time stats: {current_stats.get('total_processed', 0)} processed, {current_stats.get('total_posted', 0)} posted")
+
+    session_processed = 0
+    session_yellow_found = 0
+    session_posted = 0
+
+    try:
+        for i in range(current_index, min(current_index + IMAGES_PER_SESSION, len(urls))):
+            # Check time limit
+            if datetime.now() >= max_end_time:
+                logging.info("Time limit reached, stopping gracefully")
+                break
+
+            url = urls[i]
+            timestamp = int(time.time())
+            image_name = f"cam_{i+1}_{timestamp}.jpg"
+            image_path = TODAY_FOLDER / image_name
+
+            logging.info(f"Processing {i+1}/{len(urls)}: downloading image...")
+
+            if not download_image(url, image_path):
+                continue
+
+            session_processed += 1
+
+            if find_yellow_clusters(image_path):
+                session_yellow_found += 1
+                logging.info(f"🟡 Yellow cluster detected! Checking with AI...")
+
+                try:
+                    ai_response = ask_ai_if_yellow_car(image_path)
+                    logging.info(f"AI response: {ai_response}")
+
+                    if ai_response and "yes" in ai_response:
+                        logging.info("🚗 YELLOW CAR CONFIRMED! Posting to Bluesky...")
+                        if post_to_bluesky(image_path, alt_text="Yellow car spotted on traffic camera!"):
+                            session_posted += 1
+                            logging.info("✅ Posted to Bluesky successfully!")
+
+                except RateLimitException:
+                    logging.warning("Rate limit reached, stopping to preserve GitHub Actions minutes")
+                    break
+
+            # Clean up image to save space
+            try:
+                image_path.unlink()
+            except:
+                pass
+
+            # Brief pause to avoid overwhelming APIs
+            time.sleep(1)
+
+        # Update state with final position
+        final_index = min(current_index + session_processed, len(urls))
+        stats_update = {
+            "total_processed": session_processed,
+            "total_posted": session_posted
+        }
+        update_shuffle_state(final_index, stats_update)
+
+    except KeyboardInterrupt:
+        logging.info("Interrupted, saving progress...")
+        final_index = current_index + session_processed
+        stats_update = {"total_processed": session_processed, "total_posted": session_posted}
+        update_shuffle_state(final_index, stats_update)
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+
+    # Final summary
+    runtime = datetime.now() - start_time
+    updated_stats = load_shuffle_state().get("stats", {})
+
+    logging.info(f"\n=== SESSION SUMMARY ===")
+    logging.info(f"Runtime: {runtime.total_seconds():.1f} seconds ({runtime.total_seconds()/60:.1f} minutes)")
+    logging.info(f"Images processed this session: {session_processed}")
+    logging.info(f"Yellow clusters found: {session_yellow_found}")
+    logging.info(f"Cars posted to Bluesky: {session_posted}")
+    logging.info(f"Progress: {final_index}/{len(urls)} ({final_index/len(urls)*100:.1f}% of current cycle)")
+    logging.info(f"All-time totals: {updated_stats.get('total_processed', 0)} processed, {updated_stats.get('total_posted', 0)} posted")
+
+    if session_yellow_found > 0:
+        logging.info(f"Yellow detection rate: {session_yellow_found/session_processed*100:.1f}%")
+        if session_posted > 0:
+            logging.info(f"Confirmation rate: {session_posted/session_yellow_found*100:.1f}%")
 
 if __name__ == "__main__":
     main()
