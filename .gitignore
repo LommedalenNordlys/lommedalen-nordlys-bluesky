@@ -130,3 +130,6 @@ dist
 
 # Intellij IDEA
 .idea
+
+# testing locally
+today/

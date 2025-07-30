@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "bsky-bot"
+version = "1.0.0"
+description = "A Bluesky bot implemented in Python to find yellow cars on traffic cameras."
+authors = ["Turbolego <turbolego@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+keywords = ["bsky", "bluesky", "atproto", "bot", "python"]
+
+[tool.poetry.dependencies]
+python = ">=3.11"
+requests = "*"
+python-dotenv = "*"
+atproto = "*"
+Pillow = "*"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

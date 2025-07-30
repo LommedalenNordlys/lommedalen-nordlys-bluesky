@@ -24,9 +24,9 @@ To use this repo you will need a [Bluesky account](https://bsky.app/). [Sign up 
 
 Once you have an account for your bot, you will need to know your bot's handle and password (I recommend using an App Password, which you can create under your account's settings).
 
-#### Node.js
+#### Python
 
-To run this bot locally on your own machine you will need [Node.js](https://nodejs.org/en) version 18.16.0.
+To run this bot locally on your own machine you will need [Python](https://www.python.org/) 3.11 or newer.
 
 ### Create a new repository from this template
 
@@ -44,7 +44,7 @@ cd ${YOUR_REPO_NAME}
 To run the bot locally you will need to install the dependencies:
 
 ```sh
-npm install
+pip install -r requirements.txt
 ```
 
 Copy the `.env.example` file to `.env`.
@@ -55,16 +55,10 @@ cp .env.example .env
 
 Fill in `.env` with your Bluesky handle and password.
 
-Build the project with:
-
-```sh
-npm run build
-```
-
 You can now run the bot locally with the command:
 
 ```sh
-npm run dev
+python src/main.py
 ```
 
 This will use your credentials to connect to Bluesky and create a post. If your credentials are correct, you should see the following printed to your terminal:

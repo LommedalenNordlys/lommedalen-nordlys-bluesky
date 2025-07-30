@@ -12,24 +12,18 @@ jobs:
     steps:
       - uses: actions/checkout@v3  # Checkout the repository
 
-      - name: Use Node.js
-        uses: actions/setup-node@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          node-version-file: ".nvmrc"
+          python-version: '3.11'
 
-      - name: Cache npm dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-modules-
-
-      - run: npm ci  # Install dependencies using npm ci
-      - run: npm run build  # Run the build script
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Send post
-        run: npm start  # Execute the start script
+        run: python src/main.py
         env:
           BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
           BSKY_PASSWORD: ${{ secrets.BSKY_PASSWORD }}
