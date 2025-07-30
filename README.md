@@ -1,102 +1,183 @@
-# Build your own Bluesky bot 🦋
+# Yellow Car Bot 🚗💛
 
-This is a template repo for building [Bluesky](https://bsky.app/) bots that post on their own schedule. It uses [TypeScript](https://www.typescriptlang.org/) to build the bot and [GitHub Actions](https://docs.github.com/en/actions) to schedule the posts.
+An automated bot that monitors Norwegian traffic cameras for yellow cars and posts them to Bluesky with the classic Norwegian phrase "GUL BIL!" (Yellow Car!).
 
-* [How to use](#how-to-use)
-    * [Things you will need](#things-you-will-need)
-        * [A Bluesky account](#a-bluesky-account)
-        * [Node.js](#nodejs)
-    * [Create a new repository from this template](#create-a-new-repository-from-this-template)
-    * [Running locally to test](#running-locally-to-test)
-    * [Create your own posts](#create-your-own-posts)
-    * [Deploy](#deploy)
-        * [Schedule](#schedule)
-        * [Environment variables](#environment-variables)
-    * [Set it live](#set-it-live)
+## How It Works
 
-## How to use
+1. **Downloads images** from 814 Norwegian traffic cameras
+2. **Detects yellow clusters** using computer vision
+3. **Confirms with AI** whether the yellow object is actually a car
+4. **Posts to Bluesky** with "GUL BIL!" when a yellow car is found
 
-### Things you will need
+## Features
 
-#### A Bluesky account
+- **Fair Processing**: Shuffles camera order to ensure all cameras get processed at different times of day
+- **Budget Optimized**: Designed to stay within GitHub Actions' 2000 minutes/month limit
+- **Rate Limit Aware**: Gracefully handles API rate limiting
+- **Persistent State**: Remembers progress between runs
+- **Statistics Tracking**: Monitors detection rates and posting success
 
-To use this repo you will need a [Bluesky account](https://bsky.app/). [Sign up for an invite here](https://bsky.app/).
+## Setup
 
-Once you have an account for your bot, you will need to know your bot's handle and password (I recommend using an App Password, which you can create under your account's settings).
-
-#### Python
-
-To run this bot locally on your own machine you will need [Python](https://www.python.org/) 3.11 or newer.
-
-### Create a new repository from this template
-
-Create your own project by clicking "Use this template" on GitHub and then "Create a new repository". Select an owner and give your new repository a name and an optional description. Then click "Create repository from template".
-
-Clone your new repository to your own machine.
-
-```sh
-git clone git@github.com:${YOUR_USERNAME}/${YOUR_REPO_NAME}.git
-cd ${YOUR_REPO_NAME}
+### 1. Repository Structure
+```
+your-repo/
+├── src/
+│   └── main.py
+├── requirements.txt
+├── valid_webcam_ids.txt
+├── .github/
+│   └── workflows/
+│       └── yellow-car-bot.yml
+└── README.md
 ```
 
-### Running locally to test
+### 2. Required Files
 
-To run the bot locally you will need to install the dependencies:
-
-```sh
-pip install -r requirements.txt
+**requirements.txt**:
+```txt
+requests
+python-dotenv
+Pillow
+atproto
 ```
 
-Copy the `.env.example` file to `.env`.
-
-```sh
-cp .env.example .env
+**valid_webcam_ids.txt**:
+One traffic camera URL per line (814 URLs total). Example:
+```
+https://webkamera.atlas.vegvesen.no/public/kamera?id=3000063_1
+https://webkamera.atlas.vegvesen.no/public/kamera?id=3001004_1
+...
 ```
 
-Fill in `.env` with your Bluesky handle and password.
+### 3. GitHub Secrets
 
-You can now run the bot locally with the command:
+Set up these secrets in your repository (Settings → Secrets and variables → Actions):
 
-```sh
-python src/main.py
+- `BSKY_HANDLE`: Your Bluesky handle (e.g., `username.bsky.social`)
+- `BSKY_PASSWORD`: Your Bluesky app password (not your main password!)
+- `KEY_GITHUB_TOKEN`: Azure AI token for GPT-4o vision API
+
+### 4. Bluesky App Password
+
+1. Go to Settings → Privacy and Security → App Passwords
+2. Create a new app password for this bot
+3. Use this password (not your main password) in the `BSKY_PASSWORD` secret
+
+## Configuration
+
+Edit these variables in `src/main.py`:
+
+```python
+MAX_RUNTIME_MINUTES = 20  # Max runtime per session
+IMAGES_PER_SESSION = 30   # Images to process per session
+YELLOW_THRESHOLD = 150    # Yellow detection sensitivity (lower = more sensitive)
+MIN_CLUSTER_SIZE = 80     # Minimum yellow pixels to trigger AI check
 ```
 
-This will use your credentials to connect to Bluesky and create a post. If your credentials are correct, you should see the following printed to your terminal:
+## Schedule
 
-```
-[TIMESTAMP] Posted: "Hello from the Bluesky API"
-```
+The bot runs **3 times per day**:
+- 6:00 AM UTC
+- 2:00 PM UTC
+- 10:00 PM UTC
 
-### Create your own posts
+**Budget**: ~63 minutes/day, ~1,890 minutes/month (within 2000 limit)
 
-Currently, the bot calls on the function `getPostText` to get the text that it should post. This function returns the text "Hello from the Bluesky API" every time.
+**Coverage**: All 814 cameras processed every 9 days in randomized order
 
-To create your own posts you need to provide your own implementation of `getPostText`. You can do anything you want to generate posts, the `getPostText` function just needs to return a string or a Promise that resolves to a string.
+## How the Shuffling Works
 
-### Deploy
+1. **First Run**: Shuffles all 814 camera URLs randomly
+2. **Subsequent Runs**: Continues from where it left off
+3. **Cycle Complete**: When all URLs processed, reshuffles for next cycle
+4. **Fair Distribution**: Each camera gets processed at different times across cycles
 
-Once you have built your bot, the only thing left to do is to choose the schedule and set up the environment variables in GitHub Actions.
+## Statistics
 
-#### Schedule
+The bot tracks:
+- Total images processed (all-time)
+- Yellow clusters detected
+- Cars confirmed by AI
+- Successful Bluesky posts
+- Processing progress through current cycle
 
-The schedule is controlled by the GitHub Actions workflow in `./.github/workflows/post.yml`. The [schedule trigger](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#schedule) uses cron syntax to schedule when the workflow runs and your bot posts. [Crontab Guru](https://crontab.guru/) is a good way to visualize it.
+## Yellow Detection Algorithm
 
-For example, the following YAML will schedule your bot to post at 5:30 and 17:30 every day.
+**Two-stage process**:
 
-```yml
-on:
-  schedule:
-    - cron: "30 5,17 * * *"
-```
+1. **Computer Vision Filter**:
+    - Scans image pixels for yellow clusters
+    - Uses RGB thresholds: R>150, G>150, B<100
+    - Requires minimum 80 yellow pixels
+    - Samples every 2nd pixel for speed
 
-Be warned that many GitHub Actions jobs are scheduled to happen on the hour, so that is a busy time and may see your workflow run later than expected or be dropped entirely.
+2. **AI Confirmation**:
+    - Only triggered if yellow cluster found
+    - Uses GPT-4o Vision to confirm it's actually a car
+    - Receives simple "yes/no" response
 
-#### Environment variables
+## Troubleshooting
 
-In your repo's settings, under *Secrets and variables* > *Actions* you need to enter two Secrets to match your `.env` file. One secret should be called `BSKY_HANDLE` and contain your Bluesky username, and the other should be called `BSKY_PASSWORD` and contain your App Password that you generated for the bot account.
+### Common Issues
 
-### Set it live
+**"Rate limit reached"**:
+- Bot automatically stops to preserve GitHub Actions minutes
+- Will resume in next scheduled run
 
-Once the schedule is set up and your Environment variables configured, push your changes to your repo and wait for the schedule to trigger the workflow. Your bot will start publishing posts based on your code.
+**"Shuffle state not found"**:
+- Normal on first run
+- Bot will create new shuffle and start processing
 
-If you have any issues with that, please [raise an issue in this repo](https://github.com/philnash/bsky-bot/issues) or send me a message on Bluesky [@philna.sh](https://staging.bsky.app/profile/philna.sh).
+**"No yellow cluster detected"**:
+- Most images won't have yellow cars - this is normal
+- Adjust `YELLOW_THRESHOLD` if too sensitive/insensitive
+
+### Logs
+
+Check workflow logs for:
+- Processing progress
+- Detection statistics
+- Error messages
+- Session summaries
+
+### Manual Testing
+
+Trigger a manual run:
+1. Go to Actions tab
+2. Select "Yellow Car Bot - Budget Optimized"
+3. Click "Run workflow"
+
+## File Descriptions
+
+- **`src/main.py`**: Main bot logic
+- **`requirements.txt`**: Python dependencies
+- **`valid_webcam_ids.txt`**: List of traffic camera URLs
+- **`.github/workflows/yellow-car-bot.yml`**: GitHub Actions workflow
+- **`shuffle_state.json`**: Persistent state (auto-generated)
+
+## Privacy & Ethics
+
+- Only processes public traffic camera feeds
+- No personal data collected or stored
+- Images deleted immediately after processing
+- Respects API rate limits and terms of service
+
+## Contributing
+
+Feel free to:
+- Adjust detection parameters for better accuracy
+- Add more traffic cameras to the list
+- Improve the yellow detection algorithm
+- Enhance error handling
+
+## License
+
+This project is for educational and entertainment purposes. Please respect:
+- Traffic camera usage terms
+- Bluesky community guidelines
+- API rate limits and quotas
+
+---
+
+**Lykke til med GUL BIL-jakten!** 🚗💛
