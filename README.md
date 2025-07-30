@@ -1,4 +1,4 @@
-# Yellow Car Bot 🚗💛
+# Yellow Car Bot 🚕
 
 An automated bot that monitors Norwegian traffic cameras for yellow cars and posts them to Bluesky with the classic Norwegian phrase "GUL BIL!" (Yellow Car!).
 
@@ -180,4 +180,4 @@ This project is for educational and entertainment purposes. Please respect:
 
 ---
 
-**Lykke til med GUL BIL-jakten!** 🚗💛
+**Lykke til med GUL BIL-jakten!** 🚕
