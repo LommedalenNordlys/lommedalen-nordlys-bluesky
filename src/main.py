@@ -1,16 +1,16 @@
-import os
-import sys
-import requests
 import base64
-import logging
 import json
+import logging
+import os
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from dotenv import load_dotenv
+
+import requests
 from PIL import Image
 from atproto import Client, models
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -26,15 +26,17 @@ BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
 
 # Configuration - Optimized for 21 minutes max runtime
 MAX_RUNTIME_MINUTES = 20  # Stop at 20 minutes to be safe
-IMAGES_PER_SESSION = 30   # Process ~30 images per run (can adjust based on performance)
-YELLOW_THRESHOLD = 150    # Lower threshold for yellow detection (more sensitive)
-MIN_CLUSTER_SIZE = 80     # Smaller cluster size for detection
+IMAGES_PER_SESSION = 30  # Process ~30 images per run (can adjust based on performance)
+YELLOW_THRESHOLD = 150  # Lower threshold for yellow detection (more sensitive)
+MIN_CLUSTER_SIZE = 80  # Smaller cluster size for detection
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 class RateLimitException(Exception):
     """Custom exception for rate limiting"""
     pass
+
 
 def load_shuffle_state():
     """Load the current shuffle state from file"""
@@ -50,6 +52,7 @@ def load_shuffle_state():
             logging.warning(f"Could not load shuffle state: {e}")
     return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
 
+
 def save_shuffle_state(state):
     """Save the current shuffle state to file"""
     try:
@@ -57,6 +60,7 @@ def save_shuffle_state(state):
             json.dump(state, f)
     except Exception as e:
         logging.error(f"Could not save shuffle state: {e}")
+
 
 def get_shuffled_urls():
     """Get URLs in shuffled order, reshuffling when list is exhausted"""
@@ -82,6 +86,7 @@ def get_shuffled_urls():
 
     return state["shuffled_urls"], state["current_index"], state.get("stats", {"total_processed": 0, "total_posted": 0})
 
+
 def update_shuffle_state(new_index, stats_update=None):
     """Update the current index and stats in shuffle state"""
     state = load_shuffle_state()
@@ -92,6 +97,7 @@ def update_shuffle_state(new_index, stats_update=None):
         for key, value in stats_update.items():
             state["stats"][key] = state["stats"].get(key, 0) + value
     save_shuffle_state(state)
+
 
 def download_image(url, dest, timeout=10):
     """Download image with shorter timeout for efficiency"""
@@ -107,6 +113,7 @@ def download_image(url, dest, timeout=10):
     except Exception as e:
         logging.debug(f"Exception downloading {url}: {e}")
         return False
+
 
 def find_yellow_clusters(image_path, min_cluster_size=MIN_CLUSTER_SIZE):
     """Optimized yellow detection"""
@@ -132,6 +139,7 @@ def find_yellow_clusters(image_path, min_cluster_size=MIN_CLUSTER_SIZE):
         logging.debug(f"Error processing {image_path}: {e}")
         return False
 
+
 def get_image_data_url(image_file, image_format):
     try:
         with open(image_file, "rb") as f:
@@ -140,6 +148,7 @@ def get_image_data_url(image_file, image_format):
     except Exception as e:
         logging.error(f"Could not read '{image_file}': {e}")
         return None
+
 
 def ask_ai_if_yellow_car(image_path):
     """Streamlined AI query with minimal retries"""
@@ -159,7 +168,8 @@ def ask_ai_if_yellow_car(image_path):
         "messages": [
             {"role": "system", "content": "You are a helpful assistant. Answer with only 'yes' or 'no'."},
             {"role": "user", "content": [
-                {"type": "text", "text": "Is there a yellow car visible in this traffic camera image? Answer only 'yes' or 'no'."},
+                {"type": "text",
+                 "text": "Is there a yellow car visible in this traffic camera image? Answer only 'yes' or 'no'."},
                 {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}}
             ]}
         ],
@@ -215,6 +225,7 @@ def ask_ai_if_yellow_car(image_path):
         logging.error(f"Error calling AI endpoint: {e}")
         return None
 
+
 def post_to_bluesky(image_path, alt_text):
     """Streamlined Bluesky posting"""
     if not BSKY_HANDLE or not BSKY_PASSWORD:
@@ -236,8 +247,8 @@ def post_to_bluesky(image_path, alt_text):
         client.app.bsky.feed.post.create(
             repo=client.me.did,
             record=models.AppBskyFeedPost.Record(
-                text="GUL BIL! 🚗💛",  # Added emoji for fun
-                created_at=datetime.utcnow().isoformat() + "Z",
+                text="GUL BIL!",
+                created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 embed=models.AppBskyEmbedImages.Main(
                     images=[
                         models.AppBskyEmbedImages.Image(
@@ -254,6 +265,7 @@ def post_to_bluesky(image_path, alt_text):
         logging.error(f"Error posting to Bluesky: {e}")
         return False
 
+
 def main():
     start_time = datetime.now()
     max_end_time = start_time + timedelta(minutes=MAX_RUNTIME_MINUTES)
@@ -266,13 +278,15 @@ def main():
         logging.error("No URLs available")
         return
 
-    logging.info(f"Resuming from position {current_index}/{len(urls)} (cycle progress: {current_index/len(urls)*100:.1f}%)")
-    logging.info(f"All-time stats: {current_stats.get('total_processed', 0)} processed, {current_stats.get('total_posted', 0)} posted")
+    logging.info(
+        f"Resuming from position {current_index}/{len(urls)} (cycle progress: {current_index / len(urls) * 100:.1f}%)")
+    logging.info(
+        f"All-time stats: {current_stats.get('total_processed', 0)} processed, {current_stats.get('total_posted', 0)} posted")
 
     session_processed = 0
     session_yellow_found = 0
     session_posted = 0
-
+    final_index = 0  # Ensure final_index is always defined
     try:
         for i in range(current_index, min(current_index + IMAGES_PER_SESSION, len(urls))):
             # Check time limit
@@ -282,10 +296,10 @@ def main():
 
             url = urls[i]
             timestamp = int(time.time())
-            image_name = f"cam_{i+1}_{timestamp}.jpg"
+            image_name = f"cam_{i + 1}_{timestamp}.jpg"
             image_path = TODAY_FOLDER / image_name
 
-            logging.info(f"Processing {i+1}/{len(urls)}: downloading image...")
+            logging.info(f"Processing {i + 1}/{len(urls)}: downloading image...")
 
             if not download_image(url, image_path):
                 continue
@@ -340,17 +354,19 @@ def main():
     updated_stats = load_shuffle_state().get("stats", {})
 
     logging.info(f"\n=== SESSION SUMMARY ===")
-    logging.info(f"Runtime: {runtime.total_seconds():.1f} seconds ({runtime.total_seconds()/60:.1f} minutes)")
+    logging.info(f"Runtime: {runtime.total_seconds():.1f} seconds ({runtime.total_seconds() / 60:.1f} minutes)")
     logging.info(f"Images processed this session: {session_processed}")
     logging.info(f"Yellow clusters found: {session_yellow_found}")
     logging.info(f"Cars posted to Bluesky: {session_posted}")
-    logging.info(f"Progress: {final_index}/{len(urls)} ({final_index/len(urls)*100:.1f}% of current cycle)")
-    logging.info(f"All-time totals: {updated_stats.get('total_processed', 0)} processed, {updated_stats.get('total_posted', 0)} posted")
+    logging.info(f"Progress: {final_index}/{len(urls)} ({final_index / len(urls) * 100:.1f}% of current cycle)")
+    logging.info(
+        f"All-time totals: {updated_stats.get('total_processed', 0)} processed, {updated_stats.get('total_posted', 0)} posted")
 
     if session_yellow_found > 0:
-        logging.info(f"Yellow detection rate: {session_yellow_found/session_processed*100:.1f}%")
+        logging.info(f"Yellow detection rate: {session_yellow_found / session_processed * 100:.1f}%")
         if session_posted > 0:
-            logging.info(f"Confirmation rate: {session_posted/session_yellow_found*100:.1f}%")
+            logging.info(f"Confirmation rate: {session_posted / session_yellow_found * 100:.1f}%")
+
 
 if __name__ == "__main__":
     main()
