@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 import base64
 import logging
@@ -170,11 +171,39 @@ def ask_ai_if_yellow_car(image_path):
         resp = requests.post(f"{ENDPOINT}/chat/completions", json=body, headers=headers, timeout=30)
 
         if resp.status_code == 429:
-            logging.warning("Rate limit hit - stopping to preserve minutes")
+            # Log detailed rate limit information
+            quota_remaining = resp.headers.get("x-ms-user-quota-remaining", "unknown")
+            quota_resets_after = resp.headers.get("x-ms-user-quota-resets-after", "unknown")
+
+            logging.warning("🚫 Rate limit hit (429):")
+            logging.warning(f"   Quota remaining: {quota_remaining}")
+            logging.warning(f"   Quota resets after: {quota_resets_after}")
+
+            # Try to parse the reset time for a more user-friendly message
+            if quota_resets_after != "unknown":
+                try:
+                    from datetime import datetime
+                    reset_time = datetime.fromisoformat(quota_resets_after.replace('Z', '+00:00'))
+                    current_time = datetime.now(reset_time.tzinfo)
+                    time_until_reset = reset_time - current_time
+
+                    if time_until_reset.total_seconds() > 0:
+                        minutes = int(time_until_reset.total_seconds() / 60)
+                        seconds = int(time_until_reset.total_seconds() % 60)
+                        logging.warning(f"   Time until quota reset: {minutes}m {seconds}s")
+                    else:
+                        logging.warning("   Quota should be available now")
+                except Exception as e:
+                    logging.debug(f"Could not parse reset time: {e}")
+
+            logging.warning("Stopping session to preserve GitHub Actions minutes")
             raise RateLimitException("Rate limit reached")
 
         if resp.status_code != 200:
             logging.error(f"Azure API error: {resp.status_code}")
+            # Log response headers for debugging other errors too
+            if resp.headers:
+                logging.debug(f"Response headers: {dict(resp.headers)}")
             return None
 
         data = resp.json()
@@ -207,7 +236,7 @@ def post_to_bluesky(image_path, alt_text):
         client.app.bsky.feed.post.create(
             repo=client.me.did,
             record=models.AppBskyFeedPost.Record(
-                text="GUL BIL!",  # Added emoji for fun
+                text="GUL BIL! 🚗💛",  # Added emoji for fun
                 created_at=datetime.utcnow().isoformat() + "Z",
                 embed=models.AppBskyEmbedImages.Main(
                     images=[
