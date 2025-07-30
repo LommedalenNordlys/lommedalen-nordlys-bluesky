@@ -23,7 +23,7 @@ jobs:
           python-version: '3.11'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
@@ -36,7 +36,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Restore shuffle state
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: shuffle_state.json
           key: shuffle-state-v2-${{ github.run_number }}
@@ -44,14 +44,14 @@ jobs:
             shuffle-state-v2-
 
       - name: Run Yellow Car Detection
-        run: python main.py
+        run: python src/main.py
         env:
           BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
           BSKY_PASSWORD: ${{ secrets.BSKY_PASSWORD }}
           KEY_GITHUB_TOKEN: ${{ secrets.KEY_GITHUB_TOKEN }}
 
       - name: Save shuffle state
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         if: always()  # Save state even if workflow fails
         with:
           path: shuffle_state.json
@@ -63,7 +63,7 @@ jobs:
           rm -rf today/
 
       - name: Upload session logs (on failure)
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: yellow-car-logs-${{ github.run_number }}
