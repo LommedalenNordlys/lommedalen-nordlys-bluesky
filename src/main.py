@@ -1,6 +1,6 @@
 """
-Yellow Car Detection Bot (REST HuggingFace API version)
-Detects yellow vehicles using the 'zzzzzzz11/vit-gpt2-image-captioning' REST-enabled model
+Yellow Car Detection Bot (REST HuggingFace API BLIP version)
+Detects yellow vehicles using 'Salesforce/blip-image-captioning-base'
 """
 
 import base64
@@ -24,10 +24,8 @@ load_dotenv()
 # Configuration
 class Config:
     HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-
     BSKY_HANDLE = os.getenv("BSKY_HANDLE")
     BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
-
     TODAY_FOLDER = Path("today")
     WEBCAM_URLS_FILE = Path("valid_webcam_ids.txt")
     SHUFFLE_STATE_FILE = Path("shuffle_state.json")
@@ -194,11 +192,11 @@ class ImageProcessor:
 class AIDetector:
     """
     AI detection using Hugging Face's API-enabled image captioning model:
-    'zzzzzzz11/vit-gpt2-image-captioning'
+    'Salesforce/blip-image-captioning-base'
     """
     @staticmethod
     def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
-        model_name = "zzzzzzz11/vit-gpt2-image-captioning"
+        model_name = "Salesforce/blip-image-captioning-base"
         endpoint = f"https://api-inference.huggingface.co/models/{model_name}"
         headers = {
             "Authorization": f"Bearer {Config.HF_API_TOKEN}",
@@ -263,7 +261,6 @@ class AIDetector:
             return "yes"
         has_vehicle = any(keyword in caption for keyword in vehicle_keywords)
         has_yellow = any(keyword in caption for keyword in yellow_keywords)
-        # Short caption: vehicle and yellow near each other
         if has_vehicle and has_yellow:
             if len(caption.split()) <= 12:
                 return "yes"
