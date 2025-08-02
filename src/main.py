@@ -26,8 +26,8 @@ load_dotenv()
 class Config:
     # API Configuration
     HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-    # Using Salesforce BLIP-2 for visual question answering about colors
-    HF_MODEL_ENDPOINT = "https://api-inference.huggingface.co/models/Salesforce/blip2-opt-2.7b"
+    # Using a reliable image captioning model that works with Inference API
+    HF_MODEL_ENDPOINT = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base"
     
     # Bluesky Configuration
     BSKY_HANDLE = os.getenv("BSKY_HANDLE")
@@ -307,7 +307,7 @@ class AIDetector:
     
     @staticmethod
     def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
-        """Use Hugging Face BLIP-2 model to detect yellow vehicles via visual question answering"""
+        """Use Hugging Face BLIP model to caption images and detect yellow vehicles"""
         try:
             with open(image_path, "rb") as f:
                 image_data = f.read()
@@ -323,25 +323,14 @@ class AIDetector:
 
         headers = {
             "Authorization": f"Bearer {Config.HF_API_TOKEN}",
-            "Content-Type": "application/json"
-        }
-
-        # Convert image to base64 for BLIP-2
-        image_base64 = base64.b64encode(image_data).decode('utf-8')
-        
-        # Use visual question answering to specifically ask about yellow vehicles
-        payload = {
-            "inputs": {
-                "image": f"data:image/jpeg;base64,{image_base64}",
-                "question": "Is there a yellow car, yellow truck, yellow van, or yellow taxi visible in this image?"
-            }
         }
 
         try:
+            # Send raw image data for image captioning
             response = requests.post(
                 Config.HF_MODEL_ENDPOINT,
                 headers=headers,
-                json=payload,
+                data=image_data,
                 timeout=Config.API_TIMEOUT
             )
 
@@ -360,28 +349,40 @@ class AIDetector:
 
             result = response.json()
             
-            # BLIP-2 VQA returns a list with answer
+            # BLIP image captioning returns a list with generated_text
             if isinstance(result, list) and len(result) > 0:
-                answer = result[0].get('answer', '').lower().strip()
-                logging.debug(f"BLIP-2 raw answer: '{answer}'")
+                caption = result[0].get('generated_text', '').lower().strip()
+                logging.info(f"Image caption: '{caption}'")
                 
-                # Check for positive responses
-                positive_indicators = ['yes', 'there is', 'i can see', 'visible', 'yellow car', 'yellow truck', 'yellow van', 'yellow taxi']
-                negative_indicators = ['no', 'not', 'none', 'cannot', 'can\'t', 'don\'t see']
+                # Analyze caption for yellow vehicles
+                vehicle_keywords = ['car', 'truck', 'van', 'bus', 'vehicle', 'taxi', 'automobile', 'suv']
+                yellow_keywords = ['yellow', 'gold', 'golden', 'amber', 'bright yellow']
                 
-                # Check for positive response
-                if any(indicator in answer for indicator in positive_indicators):
-                    # Double-check it's not a negative response
-                    if not any(indicator in answer for indicator in negative_indicators):
-                        return "yes"
+                # Check if caption mentions both a vehicle and yellow color
+                has_vehicle = any(keyword in caption for keyword in vehicle_keywords)
+                has_yellow = any(keyword in caption for keyword in yellow_keywords)
                 
-                # If clearly negative
-                if any(indicator in answer for indicator in negative_indicators):
+                # Also check for common yellow vehicle descriptions
+                yellow_vehicle_phrases = [
+                    'yellow car', 'yellow truck', 'yellow van', 'yellow bus', 
+                    'yellow taxi', 'taxi cab', 'yellow vehicle', 'gold car',
+                    'golden car', 'bright yellow car'
+                ]
+                
+                has_yellow_vehicle_phrase = any(phrase in caption for phrase in yellow_vehicle_phrases)
+                
+                if has_yellow_vehicle_phrase:
+                    logging.info(f"Found explicit yellow vehicle phrase in caption")
+                    return "yes"
+                elif has_vehicle and has_yellow:
+                    logging.info(f"Found separate vehicle and yellow mentions")
+                    return "yes"
+                elif has_vehicle:
+                    logging.debug(f"Found vehicle but no yellow color mentioned")
+                    return "vehicle_found_no_yellow"
+                else:
+                    logging.debug(f"No vehicle detected in caption")
                     return "no"
-                
-                # If unclear, log and return None for manual review
-                logging.debug(f"Ambiguous response from BLIP-2: '{answer}'")
-                return None
             
             logging.debug(f"Unexpected API response format: {result}")
             return None
