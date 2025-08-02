@@ -26,8 +26,6 @@ load_dotenv()
 class Config:
     # API Configuration
     HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-    # Using ViT-GPT2 model that's confirmed to work with Inference API
-    HF_MODEL_ENDPOINT = "https://api-inference.huggingface.co/models/nlpconnect/vit-gpt2-image-captioning"
     
     # Bluesky Configuration
     BSKY_HANDLE = os.getenv("BSKY_HANDLE")
@@ -307,28 +305,51 @@ class AIDetector:
     
     @staticmethod
     def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
-        """Use Hugging Face ViT-GPT2 model to caption images and detect yellow vehicles"""
+        """Attempt multiple AI models to detect yellow vehicles"""
+        
+        # Try multiple models in order of preference
+        models_to_try = [
+            "nlpconnect/vit-gpt2-image-captioning",
+            "Salesforce/blip-image-captioning-base", 
+            "microsoft/git-base-coco",
+        ]
+        
+        for model_name in models_to_try:
+            try:
+                result = AIDetector._try_model(image_path, model_name)
+                if result is not None:
+                    return result
+                logging.debug(f"Model {model_name} returned None, trying next...")
+            except RateLimitException:
+                raise  # Don't try other models if rate limited
+            except Exception as e:
+                logging.debug(f"Model {model_name} failed: {e}, trying next...")
+                continue
+        
+        # If all models fail, fall back to enhanced color analysis
+        logging.warning("All AI models failed, using enhanced color analysis fallback")
+        return AIDetector._enhanced_color_analysis(image_path)
+    
+    @staticmethod
+    def _try_model(image_path: Path, model_name: str) -> Optional[str]:
+        """Try a specific model for image captioning"""
         try:
             with open(image_path, "rb") as f:
                 image_data = f.read()
             
-            # Validate image size (HF has limits)
-            if len(image_data) > 10 * 1024 * 1024:  # 10MB limit
-                logging.warning(f"Image {image_path} too large for API")
+            if len(image_data) > 10 * 1024 * 1024:
                 return None
                 
         except (IOError, OSError) as e:
             logging.error(f"Could not read image '{image_path}': {e}")
             return None
 
-        headers = {
-            "Authorization": f"Bearer {Config.HF_API_TOKEN}",
-        }
+        endpoint = f"https://api-inference.huggingface.co/models/{model_name}"
+        headers = {"Authorization": f"Bearer {Config.HF_API_TOKEN}"}
 
         try:
-            # Send raw image data for image captioning
             response = requests.post(
-                Config.HF_MODEL_ENDPOINT,
+                endpoint,
                 headers=headers,
                 data=image_data,
                 timeout=Config.API_TIMEOUT
@@ -336,76 +357,127 @@ class AIDetector:
 
             if response.status_code == 429:
                 retry_after = response.headers.get('Retry-After', '60')
-                logging.warning(f"Rate limit hit. Retry after {retry_after} seconds")
+                logging.warning(f"Rate limit hit on {model_name}")
                 raise RateLimitException(f"API rate limit exceeded. Retry after {retry_after}s")
 
             if response.status_code == 503:
-                logging.warning("Model is loading, this may take a few minutes")
+                logging.debug(f"Model {model_name} is loading")
+                return None
+
+            if response.status_code == 404:
+                logging.debug(f"Model {model_name} not available via Inference API")
                 return None
 
             if response.status_code != 200:
-                logging.error(f"HF API error: {response.status_code} - {response.text}")
+                logging.debug(f"Model {model_name} error: {response.status_code}")
                 return None
 
             result = response.json()
             
-            # ViT-GPT2 image captioning returns a list with generated_text
             if isinstance(result, list) and len(result) > 0:
                 caption = result[0].get('generated_text', '').lower().strip()
-                logging.info(f"Image caption: '{caption}'")
-                
-                # Analyze caption for yellow vehicles
-                vehicle_keywords = [
-                    'car', 'truck', 'van', 'bus', 'vehicle', 'taxi', 'automobile', 
-                    'suv', 'sedan', 'coupe', 'hatchback', 'convertible'
-                ]
-                yellow_keywords = ['yellow', 'gold', 'golden', 'amber', 'bright yellow', 'lemon']
-                
-                # Check for explicit yellow vehicle phrases first
-                yellow_vehicle_phrases = [
-                    'yellow car', 'yellow truck', 'yellow van', 'yellow bus', 
-                    'yellow taxi', 'taxi cab', 'yellow vehicle', 'gold car',
-                    'golden car', 'bright yellow car', 'yellow sedan', 'yellow suv',
-                    'yellow automobile', 'amber car'
-                ]
-                
-                has_yellow_vehicle_phrase = any(phrase in caption for phrase in yellow_vehicle_phrases)
-                
-                if has_yellow_vehicle_phrase:
-                    logging.info(f"✅ Found explicit yellow vehicle phrase in caption")
-                    return "yes"
-                
-                # Check if caption mentions both a vehicle and yellow color separately
-                has_vehicle = any(keyword in caption for keyword in vehicle_keywords)
-                has_yellow = any(keyword in caption for keyword in yellow_keywords)
-                
-                if has_vehicle and has_yellow:
-                    # Additional check: make sure they're related, not separate objects
-                    # Simple heuristic: if both are mentioned and it's a short caption, likely related
-                    if len(caption.split()) <= 10 or 'yellow' in caption[:len(caption)//2]:
-                        logging.info(f"✅ Found vehicle and yellow color in same context")
-                        return "yes"
-                    else:
-                        logging.info(f"🟡 Vehicle and yellow found but may be separate objects")
-                        return "maybe"
-                elif has_vehicle:
-                    logging.debug(f"❌ Found vehicle but no yellow color mentioned")
-                    return "vehicle_found_no_yellow"
-                else:
-                    logging.debug(f"❌ No vehicle detected in caption")
-                    return "no"
+                if caption:
+                    logging.info(f"[{model_name}] Caption: '{caption}'")
+                    return AIDetector._analyze_caption(caption)
             
-            logging.debug(f"Unexpected API response format: {result}")
             return None
 
         except RateLimitException:
             raise
-        except requests.RequestException as e:
-            logging.error(f"Network error calling HF API: {e}")
+        except Exception as e:
+            logging.debug(f"Error with model {model_name}: {e}")
             return None
-        except (json.JSONDecodeError, KeyError) as e:
-            logging.error(f"Error parsing HF API response: {e}")
-            return None
+    
+    @staticmethod
+    def _analyze_caption(caption: str) -> str:
+        """Analyze caption for yellow vehicle indicators"""
+        vehicle_keywords = [
+            'car', 'truck', 'van', 'bus', 'vehicle', 'taxi', 'automobile', 
+            'suv', 'sedan', 'coupe', 'hatchback', 'convertible'
+        ]
+        yellow_keywords = ['yellow', 'gold', 'golden', 'amber', 'bright yellow', 'lemon']
+        
+        # Check for explicit yellow vehicle phrases first
+        yellow_vehicle_phrases = [
+            'yellow car', 'yellow truck', 'yellow van', 'yellow bus', 
+            'yellow taxi', 'taxi cab', 'yellow vehicle', 'gold car',
+            'golden car', 'bright yellow car', 'yellow sedan', 'yellow suv'
+        ]
+        
+        has_yellow_vehicle_phrase = any(phrase in caption for phrase in yellow_vehicle_phrases)
+        
+        if has_yellow_vehicle_phrase:
+            logging.info(f"✅ Explicit yellow vehicle phrase found")
+            return "yes"
+        
+        # Check for separate mentions
+        has_vehicle = any(keyword in caption for keyword in vehicle_keywords)
+        has_yellow = any(keyword in caption for keyword in yellow_keywords)
+        
+        if has_vehicle and has_yellow:
+            # Simple context check
+            if len(caption.split()) <= 12:  # Short caption, likely related
+                logging.info(f"✅ Vehicle and yellow in short caption")
+                return "yes"
+            else:
+                logging.info(f"🟡 Vehicle and yellow found but context unclear")
+                return "maybe"
+        elif has_vehicle:
+            logging.debug(f"❌ Vehicle found but no yellow")
+            return "vehicle_found_no_yellow"
+        else:
+            logging.debug(f"❌ No vehicle detected")
+            return "no"
+    
+    @staticmethod 
+    def _enhanced_color_analysis(image_path: Path) -> str:
+        """Enhanced fallback color analysis when AI fails"""
+        try:
+            with Image.open(image_path) as img:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                width, height = img.size
+                center_region = {
+                    'x1': width // 4,
+                    'y1': height // 4, 
+                    'x2': 3 * width // 4,
+                    'y2': 3 * height // 4
+                }
+                
+                yellow_pixels = 0
+                total_pixels = 0
+                
+                # Focus on center region where vehicles are more likely
+                for y in range(center_region['y1'], center_region['y2'], 3):
+                    for x in range(center_region['x1'], center_region['x2'], 3):
+                        try:
+                            r, g, b = img.getpixel((x, y))
+                            total_pixels += 1
+                            
+                            # More refined yellow detection
+                            if (r > 180 and g > 180 and b < 100 and 
+                                abs(r - g) < 50 and r + g > 2.5 * b):
+                                yellow_pixels += 1
+                                
+                        except IndexError:
+                            continue
+                
+                if total_pixels == 0:
+                    return "no"
+                
+                yellow_percentage = (yellow_pixels / total_pixels) * 100
+                
+                # Conservative thresholds for fallback
+                if yellow_percentage > 15 and yellow_pixels > 30:
+                    logging.info(f"🟡 Fallback: Strong yellow signal ({yellow_percentage:.1f}%)")
+                    return "maybe"  # Conservative - don't post without AI confirmation
+                else:
+                    return "no"
+                    
+        except Exception as e:
+            logging.error(f"Fallback color analysis failed: {e}")
+            return "no"
 
 class BlueskyPoster:
     """Handles posting to Bluesky social network"""
