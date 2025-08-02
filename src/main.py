@@ -305,47 +305,56 @@ class AIDetector:
     
     @staticmethod
     def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
-        """Attempt multiple AI models to detect yellow vehicles"""
+        """Use Hugging Face Inference API to detect yellow vehicles"""
         
-        # Try multiple models in order of preference
-        models_to_try = [
-            "nlpconnect/vit-gpt2-image-captioning",
-            "Salesforce/blip-image-captioning-base", 
-            "microsoft/git-base-coco",
+        # Try multiple approaches and models
+        approaches = [
+            ("image_captioning", "microsoft/git-base-coco"),
+            ("image_captioning", "nlpconnect/vit-gpt2-image-captioning"),
+            ("visual_question_answering", "dandelin/vilt-b32-finetuned-vqa"),
         ]
         
-        for model_name in models_to_try:
+        for approach_type, model_name in approaches:
             try:
-                result = AIDetector._try_model(image_path, model_name)
+                if approach_type == "image_captioning":
+                    result = AIDetector._try_image_captioning(image_path, model_name)
+                elif approach_type == "visual_question_answering":
+                    result = AIDetector._try_visual_qa(image_path, model_name)
+                else:
+                    continue
+                    
                 if result is not None:
                     return result
-                logging.debug(f"Model {model_name} returned None, trying next...")
+                logging.debug(f"Approach {approach_type} with {model_name} returned None")
+                
             except RateLimitException:
                 raise  # Don't try other models if rate limited
             except Exception as e:
-                logging.debug(f"Model {model_name} failed: {e}, trying next...")
+                logging.debug(f"Approach {approach_type} with {model_name} failed: {e}")
                 continue
         
-        # If all models fail, fall back to enhanced color analysis
-        logging.warning("All AI models failed, using enhanced color analysis fallback")
+        # If all approaches fail, fall back to enhanced color analysis
+        logging.warning("All AI approaches failed, using enhanced color analysis fallback")
         return AIDetector._enhanced_color_analysis(image_path)
     
     @staticmethod
-    def _try_model(image_path: Path, model_name: str) -> Optional[str]:
-        """Try a specific model for image captioning"""
+    def _try_image_captioning(image_path: Path, model_name: str) -> Optional[str]:
+        """Try image captioning approach"""
         try:
             with open(image_path, "rb") as f:
                 image_data = f.read()
             
-            if len(image_data) > 10 * 1024 * 1024:
+            if len(image_data) > 5 * 1024 * 1024:  # 5MB limit to be safe
                 return None
                 
-        except (IOError, OSError) as e:
-            logging.error(f"Could not read image '{image_path}': {e}")
+        except (IOError, OSError):
             return None
 
         endpoint = f"https://api-inference.huggingface.co/models/{model_name}"
-        headers = {"Authorization": f"Bearer {Config.HF_API_TOKEN}"}
+        headers = {
+            "Authorization": f"Bearer {Config.HF_API_TOKEN}",
+            "Content-Type": "application/octet-stream"  # Specify binary data
+        }
 
         try:
             response = requests.post(
@@ -356,20 +365,18 @@ class AIDetector:
             )
 
             if response.status_code == 429:
-                retry_after = response.headers.get('Retry-After', '60')
-                logging.warning(f"Rate limit hit on {model_name}")
-                raise RateLimitException(f"API rate limit exceeded. Retry after {retry_after}s")
+                raise RateLimitException("API rate limit exceeded")
 
             if response.status_code == 503:
                 logging.debug(f"Model {model_name} is loading")
                 return None
 
             if response.status_code == 404:
-                logging.debug(f"Model {model_name} not available via Inference API")
+                logging.debug(f"Model {model_name} not available")
                 return None
 
             if response.status_code != 200:
-                logging.debug(f"Model {model_name} error: {response.status_code}")
+                logging.debug(f"Model {model_name} returned {response.status_code}: {response.text}")
                 return None
 
             result = response.json()
@@ -385,7 +392,82 @@ class AIDetector:
         except RateLimitException:
             raise
         except Exception as e:
-            logging.debug(f"Error with model {model_name}: {e}")
+            logging.debug(f"Error with captioning model {model_name}: {e}")
+            return None
+    
+    @staticmethod
+    def _try_visual_qa(image_path: Path, model_name: str) -> Optional[str]:
+        """Try visual question answering approach"""
+        try:
+            with open(image_path, "rb") as f:
+                image_data = f.read()
+            
+            if len(image_data) > 5 * 1024 * 1024:
+                return None
+                
+        except (IOError, OSError):
+            return None
+
+        # Convert to base64 for VQA
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        endpoint = f"https://api-inference.huggingface.co/models/{model_name}"
+        headers = {
+            "Authorization": f"Bearer {Config.HF_API_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "inputs": {
+                "question": "What color is the car or vehicle in this image?",
+                "image": f"data:image/jpeg;base64,{image_base64}"
+            }
+        }
+
+        try:
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                json=payload,
+                timeout=Config.API_TIMEOUT
+            )
+
+            if response.status_code == 429:
+                raise RateLimitException("API rate limit exceeded")
+
+            if response.status_code == 503:
+                logging.debug(f"VQA model {model_name} is loading")
+                return None
+
+            if response.status_code == 404:
+                logging.debug(f"VQA model {model_name} not available")
+                return None
+
+            if response.status_code != 200:
+                logging.debug(f"VQA model {model_name} returned {response.status_code}: {response.text}")
+                return None
+
+            result = response.json()
+            
+            if isinstance(result, list) and len(result) > 0:
+                answer = result[0].get('answer', '').lower().strip()
+                if answer:
+                    logging.info(f"[{model_name}] VQA Answer: '{answer}'")
+                    
+                    # Analyze VQA response for yellow
+                    if 'yellow' in answer or 'gold' in answer:
+                        return "yes"
+                    elif any(color in answer for color in ['red', 'blue', 'black', 'white', 'green', 'gray', 'silver']):
+                        return "no"  # Clearly identified a different color
+                    else:
+                        return None  # Unclear answer
+            
+            return None
+
+        except RateLimitException:
+            raise
+        except Exception as e:
+            logging.debug(f"Error with VQA model {model_name}: {e}")
             return None
     
     @staticmethod
