@@ -1,6 +1,6 @@
 """
 Yellow Car Detection Bot (REST HuggingFace API BLIP version)
-Detects yellow vehicles using 'Salesforce/blip-image-captioning-base'
+Detects yellow vehicles using 'Salesforce/blip-image-captioning-large'
 """
 
 import base64
@@ -39,6 +39,9 @@ class Config:
     API_TIMEOUT = 45
 
     REQUEST_DELAY = 1.0  # seconds
+    
+    # New model for the HuggingFace API
+    HF_MODEL = "Salesforce/blip-image-captioning-large"
 
     @classmethod
     def validate(cls) -> bool:
@@ -192,11 +195,11 @@ class ImageProcessor:
 class AIDetector:
     """
     AI detection using Hugging Face's API-enabled image captioning model:
-    'Salesforce/blip-image-captioning-base'
+    'Salesforce/blip-image-captioning-large'
     """
     @staticmethod
     def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
-        model_name = "Salesforce/blip-image-captioning-base"
+        model_name = Config.HF_MODEL
         endpoint = f"https://api-inference.huggingface.co/models/{model_name}"
         headers = {
             "Authorization": f"Bearer {Config.HF_API_TOKEN}",
@@ -248,24 +251,21 @@ class AIDetector:
     def _analyze_caption(caption: str) -> str:
         vehicle_keywords = [
             'car', 'truck', 'van', 'bus', 'vehicle', 'taxi', 'automobile',
-            'suv', 'sedan', 'coupe', 'hatchback', 'convertible'
+            'suv', 'sedan', 'coupe', 'hatchback', 'convertible', 'lorry', 'cab'
         ]
-        yellow_keywords = ['yellow', 'gold', 'golden', 'bright yellow', 'lemon']
-        yellow_vehicle_phrases = [
-            'yellow car', 'yellow truck', 'yellow van', 'yellow bus',
-            'yellow taxi', 'taxi cab', 'yellow vehicle', 'gold car',
-            'golden car', 'bright yellow car', 'yellow sedan', 'yellow suv'
-        ]
-        has_yellow_vehicle_phrase = any(phrase in caption for phrase in yellow_vehicle_phrases)
-        if has_yellow_vehicle_phrase:
+        yellow_keywords = ['yellow', 'gold', 'golden', 'bright yellow', 'lemon', 'amber', 'mustard']
+        
+        # Check for direct matches first
+        if any(f"{y} {v}" in caption for y in yellow_keywords for v in vehicle_keywords):
             return "yes"
+        if "taxi cab" in caption or "yellow taxi" in caption:
+            return "yes"
+
         has_vehicle = any(keyword in caption for keyword in vehicle_keywords)
         has_yellow = any(keyword in caption for keyword in yellow_keywords)
+        
         if has_vehicle and has_yellow:
-            if len(caption.split()) <= 12:
-                return "yes"
-            else:
-                return "maybe"
+            return "yes"
         elif has_vehicle:
             return "vehicle_found_no_yellow"
         else:
