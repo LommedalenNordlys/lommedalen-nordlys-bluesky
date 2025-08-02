@@ -24,7 +24,7 @@ load_dotenv()
 
 # Configuration
 class Config:
-    TOKEN = os.getenv("GITHUB_API_KEY") # This should be the new GitHub Models API key, not a regular PAT
+    TOKEN = os.getenv("KEY_GITHUB_TOKEN") # This should be the new GitHub Models API key, not a regular PAT
     ENDPOINT = "https://models.github.ai"
     MODEL_NAME = "gpt-4o"
     TODAY_FOLDER = Path("today")
