@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Yellow Car Detection Bot (GitHub Models via Azure API version)
-This version of the bot uses the new GitHub Models API endpoint to check for yellow cars.
+Yellow Car Detection Bot (Reverted to Old Endpoint)
+This version of the bot uses the old GitHub Models API endpoint to check for yellow cars.
 """
 
 import base64
@@ -12,183 +12,139 @@ import random
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import requests
 from PIL import Image
 from atproto import Client, models
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
-# Configuration
-class Config:
-    TOKEN = os.getenv("KEY_GITHUB_TOKEN") # This should be the new GitHub Models API key, not a regular PAT
-    ENDPOINT = "https://models.github.ai"
-    MODEL_NAME = "gpt-4o"
-    TODAY_FOLDER = Path("today")
-    WEBCAM_URLS_FILE = Path("valid_webcam_ids.txt")
-    SHUFFLE_STATE_FILE = Path("shuffle_state.json")
-    BSKY_HANDLE = os.getenv("BSKY_HANDLE")
-    BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
+TOKEN = os.getenv("KEY_GITHUB_TOKEN")
+ENDPOINT = "https://models.inference.ai.azure.com"
+MODEL_NAME = "gpt-4o"
+TODAY_FOLDER = Path("today")
+TODAY_FOLDER.mkdir(exist_ok=True)
+WEBCAM_URLS_FILE = Path("valid_webcam_ids.txt")
+SHUFFLE_STATE_FILE = Path("shuffle_state.json")
+BSKY_HANDLE = os.getenv("BSKY_HANDLE")
+BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
 
-    MAX_RUNTIME_MINUTES = 20
-    IMAGES_PER_SESSION = 30
-    YELLOW_THRESHOLD = 150
-    MIN_CLUSTER_SIZE = 80
-    API_TIMEOUT = 30
-    REQUEST_DELAY = 1.0  # seconds
+# Configuration - Optimized for 21 minutes max runtime
+MAX_RUNTIME_MINUTES = 20  # Stop at 20 minutes to be safe
+IMAGES_PER_SESSION = 30  # Process ~30 images per run (can adjust based on performance)
+YELLOW_THRESHOLD = 150  # Lower threshold for yellow detection (more sensitive)
+MIN_CLUSTER_SIZE = 80  # Smaller cluster size for detection
 
-    @classmethod
-    def validate(cls) -> bool:
-        missing = []
-        if not cls.TOKEN:
-            missing.append("GITHUB_API_KEY")
-        if not cls.BSKY_HANDLE:
-            missing.append("BSKY_HANDLE")
-        if not cls.BSKY_PASSWORD:
-            missing.append("BSKY_PASSWORD")
-        if not cls.WEBCAM_URLS_FILE.exists():
-            missing.append(f"Webcam URLs file: {cls.WEBCAM_URLS_FILE}")
-        if missing:
-            logging.error(f"Missing required configuration: {', '.join(missing)}")
-            return False
-        return True
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Ensure directories exist
-Config.TODAY_FOLDER.mkdir(exist_ok=True)
-
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(Config.TODAY_FOLDER / 'bot.log')
-    ]
-)
 
 class RateLimitException(Exception):
     """Custom exception for rate limiting"""
     pass
 
-class ShuffleStateManager:
-    @staticmethod
-    def load_state() -> Dict:
-        default_state = {
-            "shuffled_urls": [],
-            "current_index": 0,
-            "cycle_count": 0,
-            "stats": {"total_processed": 0, "total_posted": 0}
-        }
-        if not Config.SHUFFLE_STATE_FILE.exists():
-            return default_state
+
+def load_shuffle_state():
+    """Load the current shuffle state from file"""
+    if SHUFFLE_STATE_FILE.exists():
         try:
-            with open(Config.SHUFFLE_STATE_FILE, 'r', encoding='utf-8') as f:
+            with open(SHUFFLE_STATE_FILE, 'r') as f:
                 state = json.load(f)
-            for key, value in default_state.items():
-                if key not in state:
-                    state[key] = value
-            return state
-        except (json.JSONDecodeError, IOError):
-            return default_state
+                # Validate state structure
+                if not isinstance(state.get("shuffled_urls"), list):
+                    return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
+                return state
+        except Exception as e:
+            logging.warning(f"Could not load shuffle state: {e}")
+    return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
 
-    @staticmethod
-    def save_state(state: Dict) -> None:
-        try:
-            with open(Config.SHUFFLE_STATE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(state, f, indent=2)
-        except IOError as e:
-            logging.error(f"Could not save shuffle state: {e}")
 
-    @staticmethod
-    def get_shuffled_urls() -> Tuple[List[str], int, Dict]:
-        try:
-            with open(Config.WEBCAM_URLS_FILE, "r", encoding='utf-8') as f:
-                all_urls = [line.strip() for line in f if line.strip()]
-        except IOError as e:
-            logging.error(f"Could not read webcam URLs file: {e}")
-            return [], 0, {}
-        state = ShuffleStateManager.load_state()
-        if (not state["shuffled_urls"] or
-            state["current_index"] >= len(state["shuffled_urls"]) or
-            len(state["shuffled_urls"]) != len(all_urls)):
-            logging.info(f"Shuffling {len(all_urls)} webcam URLs for fair processing")
-            state["shuffled_urls"] = all_urls.copy()
-            random.shuffle(state["shuffled_urls"])
-            state["current_index"] = 0
-            state["cycle_count"] = state.get("cycle_count", 0) + 1
-            ShuffleStateManager.save_state(state)
-        return state["shuffled_urls"], state["current_index"], state["stats"]
+def save_shuffle_state(state):
+    """Save the current shuffle state to file"""
+    try:
+        with open(SHUFFLE_STATE_FILE, 'w') as f:
+            json.dump(state, f)
+    except Exception as e:
+        logging.error(f"Could not save shuffle state: {e}")
 
-    @staticmethod
-    def update_progress(new_index: int, stats_update: Optional[Dict] = None) -> None:
-        state = ShuffleStateManager.load_state()
-        state["current_index"] = new_index
-        if stats_update:
-            for key, value in stats_update.items():
-                state["stats"][key] = state["stats"].get(key, 0) + value
-        ShuffleStateManager.save_state(state)
 
-class ImageProcessor:
-    @staticmethod
-    def download_image(url: str, dest: Path) -> bool:
-        try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            resp = requests.get(
-                url,
-                headers=headers,
-                allow_redirects=True,
-                timeout=10, # Hardcoded timeout
-                stream=True
-            )
-            if resp.status_code == 200:
-                with open(dest, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                return True
-            else:
-                return False
-        except requests.RequestException:
+def get_shuffled_urls():
+    """Get URLs in shuffled order, reshuffling when list is exhausted"""
+    if not WEBCAM_URLS_FILE.exists():
+        logging.error(f"Webcam URLs file not found: {WEBCAM_URLS_FILE}")
+        return [], 0, {}
+
+    with open(WEBCAM_URLS_FILE, "r") as f:
+        all_urls = [line.strip() for line in f if line.strip()]
+
+    state = load_shuffle_state()
+
+    # If we need to reshuffle (first run or list exhausted)
+    if not state["shuffled_urls"] or state["current_index"] >= len(state["shuffled_urls"]):
+        logging.info(f"Shuffling {len(all_urls)} webcam URLs for fair processing")
+        state["shuffled_urls"] = all_urls.copy()
+        random.shuffle(state["shuffled_urls"])
+        state["current_index"] = 0
+        cycle_num = state.get("cycle_count", 0) + 1
+        state["cycle_count"] = cycle_num
+        logging.info(f"Starting cycle #{cycle_num}")
+        save_shuffle_state(state)
+
+    return state["shuffled_urls"], state["current_index"], state.get("stats", {"total_processed": 0, "total_posted": 0})
+
+
+def update_shuffle_state(new_index, stats_update=None):
+    """Update the current index and stats in shuffle state"""
+    state = load_shuffle_state()
+    state["current_index"] = new_index
+    if stats_update:
+        if "stats" not in state:
+            state["stats"] = {"total_processed": 0, "total_posted": 0}
+        for key, value in stats_update.items():
+            state["stats"][key] = state["stats"].get(key, 0) + value
+    save_shuffle_state(state)
+
+
+def download_image(url, dest, timeout=10):
+    """Download image with shorter timeout for efficiency"""
+    try:
+        resp = requests.get(url, allow_redirects=True, timeout=timeout)
+        if resp.status_code == 200:
+            with open(dest, "wb") as f:
+                f.write(resp.content)
+            return True
+        else:
+            logging.debug(f"Failed to download {url}: Status {resp.status_code}")
             return False
+    except Exception as e:
+        logging.debug(f"Exception downloading {url}: {e}")
+        return False
 
-    @staticmethod
-    def find_yellow_clusters(image_path: Path) -> bool:
-        try:
-            with Image.open(image_path) as img:
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                width, height = img.size
-                grid_size = 20
-                yellow_regions = []
-                for y in range(0, height - grid_size, grid_size):
-                    for x in range(0, width - grid_size, grid_size):
-                        yellow_count = 0
-                        total_pixels = 0
-                        for dy in range(0, grid_size, 2):
-                            for dx in range(0, grid_size, 2):
-                                px_x, px_y = x + dx, y + dy
-                                if px_x < width and px_y < height:
-                                    r, g, b = img.getpixel((px_x, px_y))
-                                    total_pixels += 1
-                                    if (r > Config.YELLOW_THRESHOLD and
-                                        g > Config.YELLOW_THRESHOLD and
-                                        b < 120 and
-                                        r + g > 2 * b):
-                                        yellow_count += 1
-                        if total_pixels > 0:
-                            yellow_percentage = (yellow_count / total_pixels) * 100
-                            if yellow_percentage > 25 and yellow_count > 10:
-                                yellow_regions.append({'yellow_pixels': yellow_count})
-                if not yellow_regions:
-                    return False
-                total_yellow_pixels = sum(region['yellow_pixels'] for region in yellow_regions)
-                substantial_regions = [r for r in yellow_regions if r['yellow_pixels'] > 20]
-                return (len(substantial_regions) >= 1 or
-                        (len(yellow_regions) >= 2 and total_yellow_pixels > Config.MIN_CLUSTER_SIZE))
-        except Exception:
-            return False
+
+def find_yellow_clusters(image_path, min_cluster_size=MIN_CLUSTER_SIZE):
+    """Optimized yellow detection"""
+    try:
+        img = Image.open(image_path).convert('RGB')
+        pixels = img.load()
+        width, height = img.size
+        yellow_count = 0
+
+        # Sample every 2nd pixel for speed (still accurate for cars)
+        for y in range(0, height, 2):
+            for x in range(0, width, 2):
+                r, g, b = pixels[x, y]
+                # More permissive yellow detection
+                if r > YELLOW_THRESHOLD and g > YELLOW_THRESHOLD and b < 100:
+                    yellow_count += 1
+                    # Early exit if we have enough yellow pixels
+                    if yellow_count >= min_cluster_size:
+                        return True
+
+        return yellow_count >= min_cluster_size
+    except Exception as e:
+        logging.debug(f"Error processing {image_path}: {e}")
+        return False
+
 
 def get_image_data_url(image_file, image_format):
     try:
@@ -199,224 +155,224 @@ def get_image_data_url(image_file, image_format):
         logging.error(f"Could not read '{image_file}': {e}")
         return None
 
-class AIDetector:
-    @staticmethod
-    def ask_ai_if_yellow_car(image_path: Path) -> Optional[str]:
-        if not Config.TOKEN:
-            logging.error("GitHub Models API token is not defined")
+
+def ask_ai_if_yellow_car(image_path):
+    """Streamlined AI query with minimal retries"""
+    if not TOKEN:
+        logging.error("Azure API token is not defined")
+        return None
+
+    image_data_url = get_image_data_url(image_path, "jpg")
+    if not image_data_url:
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {TOKEN}",
+        "Content-Type": "application/json"
+    }
+    body = {
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant. Answer with only 'yes' or 'no'."},
+            {"role": "user", "content": [
+                {"type": "text",
+                 "text": "Is there a yellow car visible in this traffic camera image? Answer only 'yes' or 'no'."},
+                {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}}
+            ]}
+        ],
+        "model": MODEL_NAME,
+        "max_tokens": 10  # Limit response length
+    }
+
+    try:
+        resp = requests.post(f"{ENDPOINT}/chat/completions", json=body, headers=headers, timeout=30)
+
+        if resp.status_code == 429:
+            # Log detailed rate limit information
+            quota_remaining = resp.headers.get("x-ms-user-quota-remaining", "unknown")
+            quota_resets_after = resp.headers.get("x-ms-user-quota-resets-after", "unknown")
+
+            logging.warning("🚫 Rate limit hit (429):")
+            logging.warning(f"   Quota remaining: {quota_remaining}")
+            logging.warning(f"   Quota resets after: {quota_resets_after}")
+
+            # Try to parse the reset time for a more user-friendly message
+            if quota_resets_after != "unknown":
+                try:
+                    from datetime import datetime
+                    reset_time = datetime.fromisoformat(quota_resets_after.replace('Z', '+00:00'))
+                    current_time = datetime.now(reset_time.tzinfo)
+                    time_until_reset = reset_time - current_time
+
+                    if time_until_reset.total_seconds() > 0:
+                        minutes = int(time_until_reset.total_seconds() / 60)
+                        seconds = int(time_until_reset.total_seconds() % 60)
+                        logging.warning(f"   Time until quota reset: {minutes}m {seconds}s")
+                    else:
+                        logging.warning("   Quota should be available now")
+                except Exception as e:
+                    logging.debug(f"Could not parse reset time: {e}")
+
+            logging.warning("Stopping session to preserve GitHub Actions minutes")
+            raise RateLimitException("Rate limit reached")
+
+        if resp.status_code != 200:
+            logging.error(f"Azure API error: {resp.status_code}")
+            # Log response headers for debugging other errors too
+            if resp.headers:
+                logging.debug(f"Response headers: {dict(resp.headers)}")
             return None
+
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].strip().lower()
+
+    except RateLimitException:
+        raise
+    except Exception as e:
+        logging.error(f"Error calling AI endpoint: {e}")
+        return None
+
+
+def post_to_bluesky(image_path, alt_text):
+    """Streamlined Bluesky posting"""
+    if not BSKY_HANDLE or not BSKY_PASSWORD:
+        logging.error("Bluesky credentials not defined")
+        return False
+
+    try:
+        client = Client()
+        client.login(BSKY_HANDLE.strip(), BSKY_PASSWORD.strip())
 
         image_data_url = get_image_data_url(image_path, "jpg")
         if not image_data_url:
-            return None
-
-        headers = {
-            "Authorization": f"Bearer {Config.TOKEN}",
-            "Content-Type": "application/json"
-        }
-        body = {
-            "messages": [
-                {"role": "system", "content": "You are a helpful assistant specialized in identifying vehicles. Answer with only 'yes' or 'no'."},
-                {"role": "user", "content": [
-                    {"type": "text",
-                     "text": "Is there a yellow VEHICLE (car, truck, van, bus, or motorcycle) visible in this traffic camera image? Look specifically for yellow-colored vehicles with wheels, windows, and automotive features. DO NOT count yellow road markings, yellow lines on pavement, yellow traffic signs, yellow construction equipment that is stationary, or any other non-vehicle yellow objects. Only respond 'yes' if you can clearly identify a yellow motor vehicle. Answer only 'yes' or 'no'."},
-                    {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}}
-                ]}
-            ],
-            "model": Config.MODEL_NAME,
-            "max_tokens": 10
-        }
-
-        try:
-            resp = requests.post(f"{Config.ENDPOINT}/chat/completions", json=body, headers=headers, timeout=Config.API_TIMEOUT)
-
-            if resp.status_code == 429:
-                logging.warning("🚫 Rate limit hit (429):")
-                logging.warning("Stopping session to preserve API minutes")
-                raise RateLimitException("Rate limit reached")
-
-            if resp.status_code != 200:
-                logging.error(f"GitHub Models API error: {resp.status_code} - {resp.text}")
-                return None
-
-            data = resp.json()
-            return data["choices"][0]["message"]["content"].strip().lower()
-
-        except RateLimitException:
-            raise
-        except Exception as e:
-            logging.error(f"Error calling AI endpoint: {e}")
-            return None
-
-class BlueskyPoster:
-    @staticmethod
-    def post_image(image_path: Path, alt_text: str) -> bool:
-        if not Config.BSKY_HANDLE or not Config.BSKY_PASSWORD:
-            logging.error("Bluesky credentials not defined")
             return False
 
-        try:
-            client = Client()
-            client.login(Config.BSKY_HANDLE.strip(), Config.BSKY_PASSWORD.strip())
+        header, encoded = image_data_url.split(',', 1)
+        image_bytes = base64.b64decode(encoded)
+        blob = client.upload_blob(image_bytes).blob
 
-            image_data_url = get_image_data_url(image_path, "jpg")
-            if not image_data_url:
-                return False
-
-            header, encoded = image_data_url.split(',', 1)
-            image_bytes = base64.b64decode(encoded)
-            blob = client.upload_blob(image_bytes).blob
-
-            client.app.bsky.feed.post.create(
-                repo=client.me.did,
-                record=models.AppBskyFeedPost.Record(
-                    text="GUL BIL! 🟡🚗",
-                    created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                    embed=models.AppBskyEmbedImages.Main(
-                        images=[
-                            models.AppBskyEmbedImages.Image(
-                                alt=alt_text,
-                                image=blob
-                            )
-                        ]
-                    )
+        client.app.bsky.feed.post.create(
+            repo=client.me.did,
+            record=models.AppBskyFeedPost.Record(
+                text="GUL BIL!",
+                created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                embed=models.AppBskyEmbedImages.Main(
+                    images=[
+                        models.AppBskyEmbedImages.Image(
+                            alt=alt_text,
+                            image=blob
+                        )
+                    ]
                 )
             )
-            logging.info("Successfully posted yellow car to Bluesky!")
-            return True
-        except Exception as e:
-            logging.error(f"Error posting to Bluesky: {e}")
-            return False
+        )
+        logging.info("Successfully posted yellow car to Bluesky!")
+        return True
+    except Exception as e:
+        logging.error(f"Error posting to Bluesky: {e}")
+        return False
 
-class YellowCarBot:
-    def __init__(self):
-        self.start_time = datetime.now()
-        self.max_end_time = self.start_time + timedelta(minutes=Config.MAX_RUNTIME_MINUTES)
-        self.session_stats = {
-            'processed': 0,
-            'yellow_clusters': 0,
-            'ai_confirmations': 0,
-            'posted': 0
-        }
-
-    def cleanup_image(self, image_path: Path) -> None:
-        try:
-            if image_path.exists():
-                image_path.unlink()
-        except OSError:
-            pass
-
-    def process_single_image(self, url: str, index: int) -> bool:
-        timestamp = int(time.time())
-        image_name = f"cam_{index + 1}_{timestamp}.jpg"
-        image_path = Config.TODAY_FOLDER / image_name
-
-        try:
-            logging.info(f"Processing {index + 1}: downloading image...")
-            if not ImageProcessor.download_image(url, image_path):
-                return False
-            
-            self.session_stats['processed'] += 1
-            
-            if ImageProcessor.find_yellow_clusters(image_path):
-                self.session_stats['yellow_clusters'] += 1
-                logging.info(f"🟡 Yellow cluster detected! Checking with AI...")
-                
-                try:
-                    ai_response = AIDetector.ask_ai_if_yellow_car(image_path)
-                    logging.info(f"AI response: {ai_response}")
-                    
-                    if ai_response and "yes" in ai_response:
-                        self.session_stats['ai_confirmations'] += 1
-                        logging.info("🚗 YELLOW CAR CONFIRMED! Posting to Bluesky...")
-                        if BlueskyPoster.post_image(
-                            image_path,
-                            alt_text="Yellow car spotted on traffic camera!"
-                        ):
-                            self.session_stats['posted'] += 1
-                            logging.info("✅ Posted to Bluesky successfully!")
-                            return True
-                except RateLimitException:
-                    logging.warning("Rate limit reached: stopping run.")
-                    raise
-            return False
-        finally:
-            self.cleanup_image(image_path)
-
-    def run(self) -> None:
-        if not Config.validate():
-            logging.error("Configuration validation failed")
-            return
-        
-        logging.info(f"Starting Yellow Car Bot - runtime: {Config.MAX_RUNTIME_MINUTES} minutes")
-        urls, current_index, current_stats = ShuffleStateManager.get_shuffled_urls()
-        if not urls:
-            logging.error("No webcam URLs available")
-            return
-        
-        logging.info(f"Resuming from position {current_index}/{len(urls)} "
-                     f"({current_index / len(urls) * 100:.1f}% of current cycle)")
-        logging.info(f"All-time stats: {current_stats.get('total_processed', 0)} processed, "
-                     f"{current_stats.get('total_posted', 0)} posted")
-        
-        processed_count = 0
-        final_index = current_index
-        
-        try:
-            for i in range(current_index, min(current_index + Config.IMAGES_PER_SESSION, len(urls))):
-                if datetime.now() >= self.max_end_time:
-                    logging.info("Time limit reached, stopping.")
-                    break
-                
-                url = urls[i]
-                try:
-                    self.process_single_image(url, i)
-                    processed_count += 1
-                    final_index = i + 1
-                    time.sleep(Config.REQUEST_DELAY)
-                except RateLimitException:
-                    break
-                except Exception as e:
-                    logging.error(f"Error processing image {i+1}: {e}")
-                    continue
-        except KeyboardInterrupt:
-            logging.info("Interrupted by user, saving progress...")
-            final_index = current_index + processed_count
-        finally:
-            stats_update = {
-                "total_processed": self.session_stats['processed'],
-                "total_posted": self.session_stats['posted']
-            }
-            ShuffleStateManager.update_progress(final_index, stats_update)
-            self.print_summary(urls, final_index)
-
-    def print_summary(self, urls: List[str], final_index: int) -> None:
-        runtime = datetime.now() - self.start_time
-        updated_stats = ShuffleStateManager.load_state()["stats"]
-        print(f"\n{'=' * 25} SESSION SUMMARY {'=' * 25}")
-        print(f"Runtime: {runtime.total_seconds():.1f}s ({runtime.total_seconds() / 60:.1f}m)")
-        print(f"Images processed: {self.session_stats['processed']}")
-        print(f"Yellow clusters found: {self.session_stats['yellow_clusters']}")
-        print(f"AI confirmations: {self.session_stats['ai_confirmations']}")
-        print(f"Cars posted to Bluesky: {self.session_stats['posted']}")
-        print(f"Progress: {final_index}/{len(urls)} ({final_index / len(urls) * 100:.1f}%)")
-        print(f"All-time totals: {updated_stats['total_processed']} processed, "
-              f"{updated_stats['total_posted']} posted")
-        if self.session_stats['processed'] > 0:
-            yellow_rate = (self.session_stats['yellow_clusters'] / self.session_stats['processed']) * 100
-            print(f"Yellow detection rate: {yellow_rate:.1f}%")
-            if self.session_stats['yellow_clusters'] > 0:
-                confirm_rate = (self.session_stats['ai_confirmations'] / self.session_stats['yellow_clusters']) * 100
-                print(f"AI confirmation rate: {confirm_rate:.1f}%")
 
 def main():
+    start_time = datetime.now()
+    max_end_time = start_time + timedelta(minutes=MAX_RUNTIME_MINUTES)
+
+    logging.info(f"Starting Yellow Car Bot - will run for max {MAX_RUNTIME_MINUTES} minutes")
+
+    # Get shuffled URLs and current position
+    urls, current_index, current_stats = get_shuffled_urls()
+    if not urls:
+        logging.error("No URLs available")
+        return
+
+    logging.info(
+        f"Resuming from position {current_index}/{len(urls)} (cycle progress: {current_index / len(urls) * 100:.1f}%)")
+    logging.info(
+        f"All-time stats: {current_stats.get('total_processed', 0)} processed, {current_stats.get('total_posted', 0)} posted")
+
+    session_processed = 0
+    session_yellow_found = 0
+    session_posted = 0
+    final_index = 0  # Ensure final_index is always defined
     try:
-        bot = YellowCarBot()
-        bot.run()
+        for i in range(current_index, min(current_index + IMAGES_PER_SESSION, len(urls))):
+            # Check time limit
+            if datetime.now() >= max_end_time:
+                logging.info("Time limit reached, stopping gracefully")
+                break
+
+            url = urls[i]
+            timestamp = int(time.time())
+            image_name = f"cam_{i + 1}_{timestamp}.jpg"
+            image_path = TODAY_FOLDER / image_name
+
+            logging.info(f"Processing {i + 1}/{len(urls)}: downloading image...")
+
+            if not download_image(url, image_path):
+                continue
+
+            session_processed += 1
+
+            if find_yellow_clusters(image_path):
+                session_yellow_found += 1
+                logging.info(f"🟡 Yellow cluster detected! Checking with AI...")
+
+                try:
+                    ai_response = ask_ai_if_yellow_car(image_path)
+                    logging.info(f"AI response: {ai_response}")
+
+                    if ai_response and "yes" in ai_response:
+                        logging.info("🚗 YELLOW CAR CONFIRMED! Posting to Bluesky...")
+                        if post_to_bluesky(image_path, alt_text="Yellow car spotted on traffic camera!"):
+                            session_posted += 1
+                            logging.info("✅ Posted to Bluesky successfully!")
+
+                except RateLimitException:
+                    logging.warning("Rate limit reached, stopping to preserve GitHub Actions minutes")
+                    break
+
+            # Clean up image to save space
+            try:
+                image_path.unlink()
+            except:
+                pass
+
+            # Brief pause to avoid overwhelming APIs
+            time.sleep(1)
+
+        # Update state with final position
+        final_index = min(current_index + session_processed, len(urls))
+        stats_update = {
+            "total_processed": session_processed,
+            "total_posted": session_posted
+        }
+        update_shuffle_state(final_index, stats_update)
+
+    except KeyboardInterrupt:
+        logging.info("Interrupted, saving progress...")
+        final_index = current_index + session_processed
+        stats_update = {"total_processed": session_processed, "total_posted": session_posted}
+        update_shuffle_state(final_index, stats_update)
     except Exception as e:
-        logging.critical(f"Critical error in main: {e}", exc_info=True)
-        return 1
-    return 0
+        logging.error(f"Unexpected error: {e}")
+
+    # Final summary
+    runtime = datetime.now() - start_time
+    updated_stats = load_shuffle_state().get("stats", {})
+
+    logging.info(f"\n=== SESSION SUMMARY ===")
+    logging.info(f"Runtime: {runtime.total_seconds():.1f} seconds ({runtime.total_seconds() / 60:.1f} minutes)")
+    logging.info(f"Images processed this session: {session_processed}")
+    logging.info(f"Yellow clusters found: {session_yellow_found}")
+    logging.info(f"Cars posted to Bluesky: {session_posted}")
+    logging.info(f"Progress: {final_index}/{len(urls)} ({final_index / len(urls) * 100:.1f}% of current cycle)")
+    logging.info(
+        f"All-time totals: {updated_stats.get('total_processed', 0)} processed, {updated_stats.get('total_posted', 0)} posted")
+
+    if session_yellow_found > 0:
+        logging.info(f"Yellow detection rate: {session_yellow_found / session_processed * 100:.1f}%")
+        if session_posted > 0:
+            logging.info(f"Confirmation rate: {session_posted / session_yellow_found * 100:.1f}%")
+
 
 if __name__ == "__main__":
-    exit(main())
+    main()
