@@ -26,8 +26,8 @@ load_dotenv()
 class Config:
     # API Configuration
     HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-    # Using a reliable image captioning model that works with Inference API
-    HF_MODEL_ENDPOINT = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base"
+    # Using ViT-GPT2 model that's confirmed to work with Inference API
+    HF_MODEL_ENDPOINT = "https://api-inference.huggingface.co/models/nlpconnect/vit-gpt2-image-captioning"
     
     # Bluesky Configuration
     BSKY_HANDLE = os.getenv("BSKY_HANDLE")
@@ -307,7 +307,7 @@ class AIDetector:
     
     @staticmethod
     def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
-        """Use Hugging Face BLIP model to caption images and detect yellow vehicles"""
+        """Use Hugging Face ViT-GPT2 model to caption images and detect yellow vehicles"""
         try:
             with open(image_path, "rb") as f:
                 image_data = f.read()
@@ -349,39 +349,50 @@ class AIDetector:
 
             result = response.json()
             
-            # BLIP image captioning returns a list with generated_text
+            # ViT-GPT2 image captioning returns a list with generated_text
             if isinstance(result, list) and len(result) > 0:
                 caption = result[0].get('generated_text', '').lower().strip()
                 logging.info(f"Image caption: '{caption}'")
                 
                 # Analyze caption for yellow vehicles
-                vehicle_keywords = ['car', 'truck', 'van', 'bus', 'vehicle', 'taxi', 'automobile', 'suv']
-                yellow_keywords = ['yellow', 'gold', 'golden', 'amber', 'bright yellow']
+                vehicle_keywords = [
+                    'car', 'truck', 'van', 'bus', 'vehicle', 'taxi', 'automobile', 
+                    'suv', 'sedan', 'coupe', 'hatchback', 'convertible'
+                ]
+                yellow_keywords = ['yellow', 'gold', 'golden', 'amber', 'bright yellow', 'lemon']
                 
-                # Check if caption mentions both a vehicle and yellow color
-                has_vehicle = any(keyword in caption for keyword in vehicle_keywords)
-                has_yellow = any(keyword in caption for keyword in yellow_keywords)
-                
-                # Also check for common yellow vehicle descriptions
+                # Check for explicit yellow vehicle phrases first
                 yellow_vehicle_phrases = [
                     'yellow car', 'yellow truck', 'yellow van', 'yellow bus', 
                     'yellow taxi', 'taxi cab', 'yellow vehicle', 'gold car',
-                    'golden car', 'bright yellow car'
+                    'golden car', 'bright yellow car', 'yellow sedan', 'yellow suv',
+                    'yellow automobile', 'amber car'
                 ]
                 
                 has_yellow_vehicle_phrase = any(phrase in caption for phrase in yellow_vehicle_phrases)
                 
                 if has_yellow_vehicle_phrase:
-                    logging.info(f"Found explicit yellow vehicle phrase in caption")
+                    logging.info(f"✅ Found explicit yellow vehicle phrase in caption")
                     return "yes"
-                elif has_vehicle and has_yellow:
-                    logging.info(f"Found separate vehicle and yellow mentions")
-                    return "yes"
+                
+                # Check if caption mentions both a vehicle and yellow color separately
+                has_vehicle = any(keyword in caption for keyword in vehicle_keywords)
+                has_yellow = any(keyword in caption for keyword in yellow_keywords)
+                
+                if has_vehicle and has_yellow:
+                    # Additional check: make sure they're related, not separate objects
+                    # Simple heuristic: if both are mentioned and it's a short caption, likely related
+                    if len(caption.split()) <= 10 or 'yellow' in caption[:len(caption)//2]:
+                        logging.info(f"✅ Found vehicle and yellow color in same context")
+                        return "yes"
+                    else:
+                        logging.info(f"🟡 Vehicle and yellow found but may be separate objects")
+                        return "maybe"
                 elif has_vehicle:
-                    logging.debug(f"Found vehicle but no yellow color mentioned")
+                    logging.debug(f"❌ Found vehicle but no yellow color mentioned")
                     return "vehicle_found_no_yellow"
                 else:
-                    logging.debug(f"No vehicle detected in caption")
+                    logging.debug(f"❌ No vehicle detected in caption")
                     return "no"
             
             logging.debug(f"Unexpected API response format: {result}")
