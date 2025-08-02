@@ -345,18 +345,21 @@ class AIDetector:
                 image_data = f.read()
             
             if len(image_data) > 5 * 1024 * 1024:  # 5MB limit to be safe
+                logging.warning(f"Image too large: {len(image_data)} bytes")
                 return None
                 
-        except (IOError, OSError):
+        except (IOError, OSError) as e:
+            logging.error(f"Cannot read image: {e}")
             return None
 
         endpoint = f"https://api-inference.huggingface.co/models/{model_name}"
         headers = {
             "Authorization": f"Bearer {Config.HF_API_TOKEN}",
-            "Content-Type": "application/octet-stream"  # Specify binary data
         }
 
         try:
+            logging.info(f"🤖 Trying image captioning with {model_name}...")
+            
             response = requests.post(
                 endpoint,
                 headers=headers,
@@ -364,35 +367,63 @@ class AIDetector:
                 timeout=Config.API_TIMEOUT
             )
 
+            logging.info(f"API Response: {response.status_code}")
+            
             if response.status_code == 429:
+                logging.warning(f"Rate limit hit for {model_name}")
                 raise RateLimitException("API rate limit exceeded")
 
             if response.status_code == 503:
-                logging.debug(f"Model {model_name} is loading")
+                logging.info(f"Model {model_name} is loading, will try next model")
                 return None
 
             if response.status_code == 404:
-                logging.debug(f"Model {model_name} not available")
+                logging.warning(f"Model {model_name} not found (404)")
+                return None
+            
+            if response.status_code == 401:
+                logging.error(f"Unauthorized (401) - check HF_API_TOKEN. Token starts with: {Config.HF_API_TOKEN[:10] if Config.HF_API_TOKEN else 'None'}...")
                 return None
 
             if response.status_code != 200:
-                logging.debug(f"Model {model_name} returned {response.status_code}: {response.text}")
+                logging.error(f"API Error {response.status_code} for {model_name}: {response.text[:200]}")
                 return None
 
-            result = response.json()
-            
-            if isinstance(result, list) and len(result) > 0:
-                caption = result[0].get('generated_text', '').lower().strip()
-                if caption:
-                    logging.info(f"[{model_name}] Caption: '{caption}'")
-                    return AIDetector._analyze_caption(caption)
-            
-            return None
+            try:
+                result = response.json()
+                logging.info(f"Raw API response: {result}")
+                
+                if isinstance(result, list) and len(result) > 0:
+                    caption = result[0].get('generated_text', '').lower().strip()
+                    if caption:
+                        logging.info(f"✅ [{model_name}] Caption: '{caption}'")
+                        return AIDetector._analyze_caption(caption)
+                    else:
+                        logging.warning(f"Empty caption from {model_name}")
+                elif isinstance(result, dict):
+                    # Some models return different formats
+                    caption = result.get('generated_text', '').lower().strip()
+                    if caption:
+                        logging.info(f"✅ [{model_name}] Caption (dict): '{caption}'")
+                        return AIDetector._analyze_caption(caption)
+                    else:
+                        logging.warning(f"No generated_text in response: {result}")
+                else:
+                    logging.warning(f"Unexpected response format from {model_name}: {type(result)}")
+                
+                return None
+                
+            except json.JSONDecodeError as e:
+                logging.error(f"Invalid JSON from {model_name}: {response.text[:200]}")
+                return None
 
         except RateLimitException:
             raise
+        except requests.RequestException as e:
+            logging.error(f"Network error with {model_name}: {e}")
+            return None
         except Exception as e:
-            logging.debug(f"Error with captioning model {model_name}: {e}")
+            logging.error(f"Unexpected error with {model_name}: {e}")
             return None
     
     @staticmethod
@@ -403,9 +434,11 @@ class AIDetector:
                 image_data = f.read()
             
             if len(image_data) > 5 * 1024 * 1024:
+                logging.warning(f"Image too large for VQA: {len(image_data)} bytes")
                 return None
                 
-        except (IOError, OSError):
+        except (IOError, OSError) as e:
+            logging.error(f"Cannot read image for VQA: {e}")
             return None
 
         # Convert to base64 for VQA
@@ -425,6 +458,8 @@ class AIDetector:
         }
 
         try:
+            logging.info(f"🤖 Trying VQA with {model_name}...")
+            
             response = requests.post(
                 endpoint,
                 headers=headers,
@@ -432,42 +467,76 @@ class AIDetector:
                 timeout=Config.API_TIMEOUT
             )
 
+            logging.info(f"VQA API Response: {response.status_code}")
+
             if response.status_code == 429:
+                logging.warning(f"Rate limit hit for VQA {model_name}")
                 raise RateLimitException("API rate limit exceeded")
 
             if response.status_code == 503:
-                logging.debug(f"VQA model {model_name} is loading")
+                logging.info(f"VQA model {model_name} is loading")
                 return None
 
             if response.status_code == 404:
-                logging.debug(f"VQA model {model_name} not available")
+                logging.warning(f"VQA model {model_name} not found (404)")
+                return None
+            
+            if response.status_code == 401:
+                logging.error(f"VQA Unauthorized (401) - check HF_API_TOKEN")
                 return None
 
             if response.status_code != 200:
-                logging.debug(f"VQA model {model_name} returned {response.status_code}: {response.text}")
+                logging.error(f"VQA API Error {response.status_code} for {model_name}: {response.text[:200]}")
                 return None
 
-            result = response.json()
-            
-            if isinstance(result, list) and len(result) > 0:
-                answer = result[0].get('answer', '').lower().strip()
-                if answer:
-                    logging.info(f"[{model_name}] VQA Answer: '{answer}'")
-                    
-                    # Analyze VQA response for yellow
-                    if 'yellow' in answer or 'gold' in answer:
-                        return "yes"
-                    elif any(color in answer for color in ['red', 'blue', 'black', 'white', 'green', 'gray', 'silver']):
-                        return "no"  # Clearly identified a different color
+            try:
+                result = response.json()
+                logging.info(f"VQA Raw response: {result}")
+                
+                if isinstance(result, list) and len(result) > 0:
+                    answer = result[0].get('answer', '').lower().strip()
+                    if answer:
+                        logging.info(f"✅ [{model_name}] VQA Answer: '{answer}'")
+                        
+                        # Analyze VQA response for yellow
+                        if 'yellow' in answer or 'gold' in answer:
+                            return "yes"
+                        elif any(color in answer for color in ['red', 'blue', 'black', 'white', 'green', 'gray', 'silver']):
+                            return "no"  # Clearly identified a different color
+                        else:
+                            logging.info(f"Unclear VQA answer: '{answer}'")
+                            return None  # Unclear answer
                     else:
-                        return None  # Unclear answer
-            
-            return None
+                        logging.warning(f"Empty VQA answer from {model_name}")
+                elif isinstance(result, dict):
+                    # Some VQA models may return different formats
+                    answer = result.get('answer', '').lower().strip()
+                    if answer:
+                        logging.info(f"✅ [{model_name}] VQA Answer (dict): '{answer}'")
+                        if 'yellow' in answer or 'gold' in answer:
+                            return "yes"
+                        elif any(color in answer for color in ['red', 'blue', 'black', 'white', 'green', 'gray', 'silver']):
+                            return "no"
+                        else:
+                            return None
+                    else:
+                        logging.warning(f"No answer in VQA response: {result}")
+                else:
+                    logging.warning(f"Unexpected VQA response format: {type(result)}")
+                
+                return None
+                
+            except json.JSONDecodeError as e:
+                logging.error(f"Invalid JSON from VQA {model_name}: {response.text[:200]}")
+                return None
 
         except RateLimitException:
             raise
+        except requests.RequestException as e:
+            logging.error(f"Network error with VQA {model_name}: {e}")
+            return None
         except Exception as e:
-            logging.debug(f"Error with VQA model {model_name}: {e}")
+            logging.error(f"Unexpected error with VQA {model_name}: {e}")
             return None
     
     @staticmethod
