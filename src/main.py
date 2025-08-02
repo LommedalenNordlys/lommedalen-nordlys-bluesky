@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Yellow Car Detection Bot (Multi-model HuggingFace API version)
-Detects yellow vehicles by combining an image captioning model with a text classification model.
+Yellow Car Detection Bot (GitHub Models via Azure API version)
+This version of the bot uses the new GitHub Models API endpoint to check for yellow cars.
 """
 
 import base64
@@ -24,34 +24,27 @@ load_dotenv()
 
 # Configuration
 class Config:
-    HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-    BSKY_HANDLE = os.getenv("BSKY_HANDLE")
-    BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
+    TOKEN = os.getenv("GITHUB_API_KEY") # This should be the new GitHub Models API key, not a regular PAT
+    ENDPOINT = "https://models.github.ai"
+    MODEL_NAME = "gpt-4o"
     TODAY_FOLDER = Path("today")
     WEBCAM_URLS_FILE = Path("valid_webcam_ids.txt")
     SHUFFLE_STATE_FILE = Path("shuffle_state.json")
+    BSKY_HANDLE = os.getenv("BSKY_HANDLE")
+    BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
 
     MAX_RUNTIME_MINUTES = 20
     IMAGES_PER_SESSION = 30
-
     YELLOW_THRESHOLD = 150
     MIN_CLUSTER_SIZE = 80
-    DOWNLOAD_TIMEOUT = 10
-    API_TIMEOUT = 45
-
+    API_TIMEOUT = 30
     REQUEST_DELAY = 1.0  # seconds
-    
-    # Image Captioning Model (Image-to-Text) - more likely to be on a stable API
-    CAPTION_MODEL = "Salesforce/blip-image-captioning-base"
-    
-    # Text Classification Model (Zero-Shot Classification) for verification
-    CLASSIFICATION_MODEL = "facebook/bart-large-mnli"
 
     @classmethod
     def validate(cls) -> bool:
         missing = []
-        if not cls.HF_API_TOKEN:
-            missing.append("HF_API_TOKEN")
+        if not cls.TOKEN:
+            missing.append("GITHUB_API_KEY")
         if not cls.BSKY_HANDLE:
             missing.append("BSKY_HANDLE")
         if not cls.BSKY_PASSWORD:
@@ -77,6 +70,7 @@ logging.basicConfig(
 )
 
 class RateLimitException(Exception):
+    """Custom exception for rate limiting"""
     pass
 
 class ShuffleStateManager:
@@ -146,7 +140,7 @@ class ImageProcessor:
                 url,
                 headers=headers,
                 allow_redirects=True,
-                timeout=Config.DOWNLOAD_TIMEOUT,
+                timeout=10, # Hardcoded timeout
                 stream=True
             )
             if resp.status_code == 200:
@@ -196,115 +190,87 @@ class ImageProcessor:
         except Exception:
             return False
 
-class AIDetector:
-    """
-    AI detection using a multi-step Hugging Face API approach.
-    1. Image Captioning to describe the image.
-    2. Zero-Shot Text Classification to verify the presence of a yellow car.
-    """
-    @staticmethod
-    def _query_api(model_name: str, payload: bytes or Dict) -> Optional[Dict]:
-        endpoint = f"https://api-inference.huggingface.co/models/{model_name}"
-        headers = {
-            "Authorization": f"Bearer {Config.HF_API_TOKEN}",
-            "Content-Type": "application/octet-stream" if isinstance(payload, bytes) else "application/json"
-        }
-        try:
-            response = requests.post(endpoint, headers=headers, data=payload, timeout=Config.API_TIMEOUT)
-        except Exception as e:
-            logging.error(f"Request to HF API for model {model_name} failed: {e}")
-            return None
-
-        if response.status_code == 429:
-            logging.warning("Rate limit hit for HuggingFace model")
-            raise RateLimitException()
-        if response.status_code == 503:
-            logging.info(f"Model {model_name} is loading. This can take a while if it's the first request.")
-            return None
-        if response.status_code == 404:
-            logging.error(f"Model {model_name} not found (404). This often indicates the model is not deployed on the public inference API.")
-            return None
-        if response.status_code == 401:
-            logging.error("Unauthorized (401) - check HF_API_TOKEN.")
-            return None
-        if response.status_code != 200:
-            logging.error(f"HF API error {response.status_code}: {response.text}")
-            return None
-        try:
-            return response.json()
-        except Exception as e:
-            logging.error(f"Error parsing HF API result for {model_name}: {e}")
-            return None
-
-    @staticmethod
-    def get_image_caption(image_path: Path) -> Optional[str]:
-        try:
-            with open(image_path, "rb") as f:
-                image_data = f.read()
-        except Exception as e:
-            logging.error(f"Cannot read image: {e}")
-            return None
-        
-        caption_result = AIDetector._query_api(Config.CAPTION_MODEL, image_data)
-        if caption_result and isinstance(caption_result, list) and 'generated_text' in caption_result[0]:
-            return caption_result[0]['generated_text']
+def get_image_data_url(image_file, image_format):
+    try:
+        with open(image_file, "rb") as f:
+            image_base64 = base64.b64encode(f.read()).decode()
+        return f"data:image/{image_format};base64,{image_base64}"
+    except Exception as e:
+        logging.error(f"Could not read '{image_file}': {e}")
         return None
 
+class AIDetector:
     @staticmethod
-    def classify_caption(caption: str) -> Optional[str]:
-        payload = {
-            "inputs": caption,
-            "parameters": {
-                "candidate_labels": ["yellow car", "vehicle", "other"],
-                "multi_label": True
-            }
-        }
-        classification_result = AIDetector._query_api(Config.CLASSIFICATION_MODEL, json.dumps(payload).encode('utf-8'))
-        
-        if classification_result and 'labels' in classification_result and 'scores' in classification_result:
-            # The model returns labels and their scores. We can check if "yellow car" is the top label.
-            # We also check for a reasonable score to avoid false positives.
-            top_label = classification_result['labels'][0]
-            top_score = classification_result['scores'][0]
-            
-            logging.info(f"Classification result: top label '{top_label}' with score {top_score:.2f}")
-            
-            # We can set a threshold. A score > 0.8 is a good starting point.
-            if top_label == "yellow car" and top_score > 0.8:
-                return "yes"
-            elif top_label == "vehicle" and top_score > 0.8:
-                return "vehicle_found_no_yellow"
-            else:
-                return "no"
-        return "no"
+    def ask_ai_if_yellow_car(image_path: Path) -> Optional[str]:
+        if not Config.TOKEN:
+            logging.error("GitHub Models API token is not defined")
+            return None
 
-    @staticmethod
-    def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
-        # Step 1: Get a caption for the image
-        caption = AIDetector.get_image_caption(image_path)
-        if not caption:
-            logging.warning("Could not get a caption for the image.")
-            return "no"
-        
-        logging.info(f"AI-generated caption: '{caption}'")
-        
-        # Step 2: Use a zero-shot text classification model to verify the caption
-        return AIDetector.classify_caption(caption)
+        image_data_url = get_image_data_url(image_path, "jpg")
+        if not image_data_url:
+            return None
+
+        headers = {
+            "Authorization": f"Bearer {Config.TOKEN}",
+            "Content-Type": "application/json"
+        }
+        body = {
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant specialized in identifying vehicles. Answer with only 'yes' or 'no'."},
+                {"role": "user", "content": [
+                    {"type": "text",
+                     "text": "Is there a yellow VEHICLE (car, truck, van, bus, or motorcycle) visible in this traffic camera image? Look specifically for yellow-colored vehicles with wheels, windows, and automotive features. DO NOT count yellow road markings, yellow lines on pavement, yellow traffic signs, yellow construction equipment that is stationary, or any other non-vehicle yellow objects. Only respond 'yes' if you can clearly identify a yellow motor vehicle. Answer only 'yes' or 'no'."},
+                    {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}}
+                ]}
+            ],
+            "model": Config.MODEL_NAME,
+            "max_tokens": 10
+        }
+
+        try:
+            resp = requests.post(f"{Config.ENDPOINT}/chat/completions", json=body, headers=headers, timeout=Config.API_TIMEOUT)
+
+            if resp.status_code == 429:
+                logging.warning("🚫 Rate limit hit (429):")
+                logging.warning("Stopping session to preserve API minutes")
+                raise RateLimitException("Rate limit reached")
+
+            if resp.status_code != 200:
+                logging.error(f"GitHub Models API error: {resp.status_code} - {resp.text}")
+                return None
+
+            data = resp.json()
+            return data["choices"][0]["message"]["content"].strip().lower()
+
+        except RateLimitException:
+            raise
+        except Exception as e:
+            logging.error(f"Error calling AI endpoint: {e}")
+            return None
 
 class BlueskyPoster:
     @staticmethod
     def post_image(image_path: Path, alt_text: str) -> bool:
+        if not Config.BSKY_HANDLE or not Config.BSKY_PASSWORD:
+            logging.error("Bluesky credentials not defined")
+            return False
+
         try:
             client = Client()
             client.login(Config.BSKY_HANDLE.strip(), Config.BSKY_PASSWORD.strip())
-            with open(image_path, "rb") as f:
-                image_data = f.read()
-            blob = client.upload_blob(image_data).blob
-            post_text = "GUL BIL! 🟡🚗"
+
+            image_data_url = get_image_data_url(image_path, "jpg")
+            if not image_data_url:
+                return False
+
+            header, encoded = image_data_url.split(',', 1)
+            image_bytes = base64.b64decode(encoded)
+            blob = client.upload_blob(image_bytes).blob
+
             client.app.bsky.feed.post.create(
                 repo=client.me.did,
                 record=models.AppBskyFeedPost.Record(
-                    text=post_text,
+                    text="GUL BIL! 🟡🚗",
                     created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                     embed=models.AppBskyEmbedImages.Main(
                         images=[
@@ -344,18 +310,23 @@ class YellowCarBot:
         timestamp = int(time.time())
         image_name = f"cam_{index + 1}_{timestamp}.jpg"
         image_path = Config.TODAY_FOLDER / image_name
+
         try:
             logging.info(f"Processing {index + 1}: downloading image...")
             if not ImageProcessor.download_image(url, image_path):
                 return False
+            
             self.session_stats['processed'] += 1
+            
             if ImageProcessor.find_yellow_clusters(image_path):
                 self.session_stats['yellow_clusters'] += 1
-                logging.info("🟡 Yellow cluster detected! Checking with AI...")
+                logging.info(f"🟡 Yellow cluster detected! Checking with AI...")
+                
                 try:
-                    ai_response = AIDetector.detect_yellow_vehicle(image_path)
+                    ai_response = AIDetector.ask_ai_if_yellow_car(image_path)
                     logging.info(f"AI response: {ai_response}")
-                    if ai_response == "yes":
+                    
+                    if ai_response and "yes" in ai_response:
                         self.session_stats['ai_confirmations'] += 1
                         logging.info("🚗 YELLOW CAR CONFIRMED! Posting to Bluesky...")
                         if BlueskyPoster.post_image(
@@ -376,22 +347,27 @@ class YellowCarBot:
         if not Config.validate():
             logging.error("Configuration validation failed")
             return
+        
         logging.info(f"Starting Yellow Car Bot - runtime: {Config.MAX_RUNTIME_MINUTES} minutes")
         urls, current_index, current_stats = ShuffleStateManager.get_shuffled_urls()
         if not urls:
             logging.error("No webcam URLs available")
             return
+        
         logging.info(f"Resuming from position {current_index}/{len(urls)} "
                      f"({current_index / len(urls) * 100:.1f}% of current cycle)")
         logging.info(f"All-time stats: {current_stats.get('total_processed', 0)} processed, "
                      f"{current_stats.get('total_posted', 0)} posted")
+        
         processed_count = 0
         final_index = current_index
+        
         try:
             for i in range(current_index, min(current_index + Config.IMAGES_PER_SESSION, len(urls))):
                 if datetime.now() >= self.max_end_time:
                     logging.info("Time limit reached, stopping.")
                     break
+                
                 url = urls[i]
                 try:
                     self.process_single_image(url, i)
@@ -405,6 +381,7 @@ class YellowCarBot:
                     continue
         except KeyboardInterrupt:
             logging.info("Interrupted by user, saving progress...")
+            final_index = current_index + processed_count
         finally:
             stats_update = {
                 "total_processed": self.session_stats['processed'],
