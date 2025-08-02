@@ -26,7 +26,8 @@ load_dotenv()
 class Config:
     # API Configuration
     HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-    HF_MODEL_ENDPOINT = "https://api-inference.huggingface.co/models/microsoft/Florence-2-large"
+    # Using Salesforce BLIP-2 for visual question answering about colors
+    HF_MODEL_ENDPOINT = "https://api-inference.huggingface.co/models/Salesforce/blip2-opt-2.7b"
     
     # Bluesky Configuration
     BSKY_HANDLE = os.getenv("BSKY_HANDLE")
@@ -209,7 +210,7 @@ class ImageProcessor:
     
     @staticmethod
     def find_yellow_clusters(image_path: Path) -> bool:
-        """Detect yellow color clusters in image using optimized sampling"""
+        """Detect yellow color clusters in image, focusing on vehicle-sized areas"""
         try:
             with Image.open(image_path) as img:
                 # Convert to RGB if needed
@@ -219,33 +220,64 @@ class ImageProcessor:
                 # Get image dimensions
                 width, height = img.size
                 
-                # Use more efficient sampling for large images
-                step_size = max(1, min(width, height) // 200)  # Adaptive step size
-                yellow_count = 0
-                total_samples = 0
+                # Create a grid to analyze regions (looking for vehicle-sized yellow areas)
+                grid_size = 20  # Analyze in 20x20 pixel blocks
+                yellow_regions = []
                 
-                # Sample pixels in a grid pattern
-                for y in range(0, height, step_size):
-                    for x in range(0, width, step_size):
-                        try:
-                            r, g, b = img.getpixel((x, y))
-                            total_samples += 1
+                for y in range(0, height - grid_size, grid_size):
+                    for x in range(0, width - grid_size, grid_size):
+                        yellow_count = 0
+                        total_pixels = 0
+                        
+                        # Sample pixels in this grid region
+                        for dy in range(0, grid_size, 2):
+                            for dx in range(0, grid_size, 2):
+                                try:
+                                    px_x, px_y = x + dx, y + dy
+                                    if px_x < width and px_y < height:
+                                        r, g, b = img.getpixel((px_x, px_y))
+                                        total_pixels += 1
+                                        
+                                        # More refined yellow detection
+                                        # High red and green, low blue, but also check ratios
+                                        if (r > Config.YELLOW_THRESHOLD and 
+                                            g > Config.YELLOW_THRESHOLD and 
+                                            b < 120 and
+                                            r + g > 2 * b):  # Ensure yellow-ish ratio
+                                            yellow_count += 1
+                                            
+                                except IndexError:
+                                    continue
+                        
+                        if total_pixels > 0:
+                            yellow_percentage = (yellow_count / total_pixels) * 100
                             
-                            # Check for yellow-ish color (high R and G, low B)
-                            if (r > Config.YELLOW_THRESHOLD and 
-                                g > Config.YELLOW_THRESHOLD and 
-                                b < 100):
-                                yellow_count += 1
-                                
-                        except IndexError:
-                            continue  # Skip invalid coordinates
+                            # If this region has significant yellow content
+                            if yellow_percentage > 25 and yellow_count > 10:
+                                yellow_regions.append({
+                                    'x': x, 'y': y, 'size': grid_size,
+                                    'yellow_pixels': yellow_count,
+                                    'percentage': yellow_percentage
+                                })
                 
-                # Calculate percentage of yellow pixels
-                if total_samples == 0:
+                # Check if we have enough significant yellow regions
+                # Could be one large vehicle or multiple smaller elements
+                if not yellow_regions:
                     return False
-                    
-                yellow_percentage = (yellow_count / total_samples) * 100
-                return yellow_count >= Config.MIN_CLUSTER_SIZE or yellow_percentage > 5.0
+                
+                total_yellow_pixels = sum(region['yellow_pixels'] for region in yellow_regions)
+                
+                # Log the regions found for debugging
+                if len(yellow_regions) > 0:
+                    logging.debug(f"Found {len(yellow_regions)} yellow regions with total {total_yellow_pixels} yellow pixels")
+                
+                # Criteria for detection:
+                # 1. At least one substantial region, OR
+                # 2. Multiple smaller regions that could form a vehicle
+                substantial_regions = [r for r in yellow_regions if r['yellow_pixels'] > 20]
+                
+                return (len(substantial_regions) >= 1 or 
+                        (len(yellow_regions) >= 2 and total_yellow_pixels > Config.MIN_CLUSTER_SIZE))
                 
         except (IOError, OSError) as e:
             logging.debug(f"Error processing image {image_path}: {e}")
@@ -275,9 +307,18 @@ class AIDetector:
     
     @staticmethod
     def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
-        """Use Hugging Face Florence-2 model to detect yellow vehicles"""
-        image_data_url = AIDetector.get_image_data_url(image_path)
-        if not image_data_url:
+        """Use Hugging Face BLIP-2 model to detect yellow vehicles via visual question answering"""
+        try:
+            with open(image_path, "rb") as f:
+                image_data = f.read()
+            
+            # Validate image size (HF has limits)
+            if len(image_data) > 10 * 1024 * 1024:  # 10MB limit
+                logging.warning(f"Image {image_path} too large for API")
+                return None
+                
+        except (IOError, OSError) as e:
+            logging.error(f"Could not read image '{image_path}': {e}")
             return None
 
         headers = {
@@ -285,14 +326,14 @@ class AIDetector:
             "Content-Type": "application/json"
         }
 
-        # Simplified payload for Florence-2
+        # Convert image to base64 for BLIP-2
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        # Use visual question answering to specifically ask about yellow vehicles
         payload = {
             "inputs": {
-                "image": image_data_url,
-                "text": "<OD>"  # Object Detection task
-            },
-            "parameters": {
-                "max_new_tokens": 100
+                "image": f"data:image/jpeg;base64,{image_base64}",
+                "question": "Is there a yellow car, yellow truck, yellow van, or yellow taxi visible in this image?"
             }
         }
 
@@ -319,23 +360,28 @@ class AIDetector:
 
             result = response.json()
             
-            # Parse Florence-2 object detection response
+            # BLIP-2 VQA returns a list with answer
             if isinstance(result, list) and len(result) > 0:
-                detection_text = result[0].get('generated_text', '').lower()
+                answer = result[0].get('answer', '').lower().strip()
+                logging.debug(f"BLIP-2 raw answer: '{answer}'")
                 
-                # Look for vehicle-related keywords and yellow color
-                vehicle_keywords = ['car', 'truck', 'van', 'bus', 'vehicle', 'taxi']
-                yellow_keywords = ['yellow', 'gold', 'amber']
+                # Check for positive responses
+                positive_indicators = ['yes', 'there is', 'i can see', 'visible', 'yellow car', 'yellow truck', 'yellow van', 'yellow taxi']
+                negative_indicators = ['no', 'not', 'none', 'cannot', 'can\'t', 'don\'t see']
                 
-                has_vehicle = any(keyword in detection_text for keyword in vehicle_keywords)
-                has_yellow = any(keyword in detection_text for keyword in yellow_keywords)
+                # Check for positive response
+                if any(indicator in answer for indicator in positive_indicators):
+                    # Double-check it's not a negative response
+                    if not any(indicator in answer for indicator in negative_indicators):
+                        return "yes"
                 
-                if has_vehicle and has_yellow:
-                    return "yes"
-                elif has_vehicle:
-                    return "vehicle_found_no_yellow"
-                else:
+                # If clearly negative
+                if any(indicator in answer for indicator in negative_indicators):
                     return "no"
+                
+                # If unclear, log and return None for manual review
+                logging.debug(f"Ambiguous response from BLIP-2: '{answer}'")
+                return None
             
             logging.debug(f"Unexpected API response format: {result}")
             return None
