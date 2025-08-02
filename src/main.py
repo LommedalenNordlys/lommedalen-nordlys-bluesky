@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Yellow Car Detection Bot (REST HuggingFace API BLIP version)
-Detects yellow vehicles using 'nlpconnect/vit-gpt2-image-captioning'
+Yellow Car Detection Bot (Multi-model HuggingFace API version)
+Detects yellow vehicles by combining an image captioning model with a text classification model.
 """
 
 import base64
@@ -41,8 +41,11 @@ class Config:
 
     REQUEST_DELAY = 1.0  # seconds
     
-    # New model for the HuggingFace API. This one is more widely used and should be available.
-    HF_MODEL = "nlpconnect/vit-gpt2-image-captioning"
+    # Image Captioning Model (Image-to-Text) - more likely to be on a stable API
+    CAPTION_MODEL = "Salesforce/blip-image-captioning-base"
+    
+    # Text Classification Model (Zero-Shot Classification) for verification
+    CLASSIFICATION_MODEL = "facebook/bart-large-mnli"
 
     @classmethod
     def validate(cls) -> bool:
@@ -195,28 +198,21 @@ class ImageProcessor:
 
 class AIDetector:
     """
-    AI detection using Hugging Face's API-enabled image captioning model:
-    'nlpconnect/vit-gpt2-image-captioning'
+    AI detection using a multi-step Hugging Face API approach.
+    1. Image Captioning to describe the image.
+    2. Zero-Shot Text Classification to verify the presence of a yellow car.
     """
     @staticmethod
-    def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
-        model_name = Config.HF_MODEL
+    def _query_api(model_name: str, payload: bytes or Dict) -> Optional[Dict]:
         endpoint = f"https://api-inference.huggingface.co/models/{model_name}"
         headers = {
             "Authorization": f"Bearer {Config.HF_API_TOKEN}",
-            "Content-Type": "application/octet-stream"
+            "Content-Type": "application/octet-stream" if isinstance(payload, bytes) else "application/json"
         }
         try:
-            with open(image_path, "rb") as f:
-                image_data = f.read()
+            response = requests.post(endpoint, headers=headers, data=payload, timeout=Config.API_TIMEOUT)
         except Exception as e:
-            logging.error(f"Cannot read image: {e}")
-            return None
-        try:
-            # We are sending the raw image bytes in the request body
-            response = requests.post(endpoint, headers=headers, data=image_data, timeout=Config.API_TIMEOUT)
-        except Exception as e:
-            logging.error(f"Request to HF API failed: {e}")
+            logging.error(f"Request to HF API for model {model_name} failed: {e}")
             return None
 
         if response.status_code == 429:
@@ -234,45 +230,66 @@ class AIDetector:
         if response.status_code != 200:
             logging.error(f"HF API error {response.status_code}: {response.text}")
             return None
-
         try:
-            result = response.json()
-            logging.info(f"HuggingFace API result: {result}")
-            if isinstance(result, list) and result and 'generated_text' in result[0]:
-                caption = result[0]['generated_text'].lower().strip()
-                return AIDetector._analyze_caption(caption)
-            elif isinstance(result, dict) and 'generated_text' in result:
-                caption = result['generated_text'].lower().strip()
-                return AIDetector._analyze_caption(caption)
-            else:
-                return None
+            return response.json()
         except Exception as e:
-            logging.error(f"Error parsing HF API result: {e}")
+            logging.error(f"Error parsing HF API result for {model_name}: {e}")
             return None
 
     @staticmethod
-    def _analyze_caption(caption: str) -> str:
-        vehicle_keywords = [
-            'car', 'truck', 'van', 'bus', 'vehicle', 'taxi', 'automobile',
-            'suv', 'sedan', 'coupe', 'hatchback', 'convertible', 'lorry', 'cab'
-        ]
-        yellow_keywords = ['yellow', 'gold', 'golden', 'bright yellow', 'lemon', 'amber', 'mustard']
+    def get_image_caption(image_path: Path) -> Optional[str]:
+        try:
+            with open(image_path, "rb") as f:
+                image_data = f.read()
+        except Exception as e:
+            logging.error(f"Cannot read image: {e}")
+            return None
         
-        # Check for direct matches first
-        if any(f"{y} {v}" in caption for y in yellow_keywords for v in vehicle_keywords):
-            return "yes"
-        if "taxi cab" in caption or "yellow taxi" in caption:
-            return "yes"
+        caption_result = AIDetector._query_api(Config.CAPTION_MODEL, image_data)
+        if caption_result and isinstance(caption_result, list) and 'generated_text' in caption_result[0]:
+            return caption_result[0]['generated_text']
+        return None
 
-        has_vehicle = any(keyword in caption for keyword in vehicle_keywords)
-        has_yellow = any(keyword in caption for keyword in yellow_keywords)
+    @staticmethod
+    def classify_caption(caption: str) -> Optional[str]:
+        payload = {
+            "inputs": caption,
+            "parameters": {
+                "candidate_labels": ["yellow car", "vehicle", "other"],
+                "multi_label": True
+            }
+        }
+        classification_result = AIDetector._query_api(Config.CLASSIFICATION_MODEL, json.dumps(payload).encode('utf-8'))
         
-        if has_vehicle and has_yellow:
-            return "yes"
-        elif has_vehicle:
-            return "vehicle_found_no_yellow"
-        else:
+        if classification_result and 'labels' in classification_result and 'scores' in classification_result:
+            # The model returns labels and their scores. We can check if "yellow car" is the top label.
+            # We also check for a reasonable score to avoid false positives.
+            top_label = classification_result['labels'][0]
+            top_score = classification_result['scores'][0]
+            
+            logging.info(f"Classification result: top label '{top_label}' with score {top_score:.2f}")
+            
+            # We can set a threshold. A score > 0.8 is a good starting point.
+            if top_label == "yellow car" and top_score > 0.8:
+                return "yes"
+            elif top_label == "vehicle" and top_score > 0.8:
+                return "vehicle_found_no_yellow"
+            else:
+                return "no"
+        return "no"
+
+    @staticmethod
+    def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
+        # Step 1: Get a caption for the image
+        caption = AIDetector.get_image_caption(image_path)
+        if not caption:
+            logging.warning("Could not get a caption for the image.")
             return "no"
+        
+        logging.info(f"AI-generated caption: '{caption}'")
+        
+        # Step 2: Use a zero-shot text classification model to verify the caption
+        return AIDetector.classify_caption(caption)
 
 class BlueskyPoster:
     @staticmethod
