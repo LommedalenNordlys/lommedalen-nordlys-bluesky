@@ -1,6 +1,7 @@
+#!/usr/bin/env python3
 """
 Yellow Car Detection Bot (REST HuggingFace API BLIP version)
-Detects yellow vehicles using 'Bhanuprasad/autotrain-blip-base-image-captioning-79032549021'
+Detects yellow vehicles using 'nlpconnect/vit-gpt2-image-captioning'
 """
 
 import base64
@@ -40,8 +41,8 @@ class Config:
 
     REQUEST_DELAY = 1.0  # seconds
     
-    # New model for the HuggingFace API
-    HF_MODEL = "Bhanuprasad/autotrain-blip-base-image-captioning-79032549021"
+    # New model for the HuggingFace API. This one is more widely used and should be available.
+    HF_MODEL = "nlpconnect/vit-gpt2-image-captioning"
 
     @classmethod
     def validate(cls) -> bool:
@@ -195,7 +196,7 @@ class ImageProcessor:
 class AIDetector:
     """
     AI detection using Hugging Face's API-enabled image captioning model:
-    'Bhanuprasad/autotrain-blip-base-image-captioning-79032549021'
+    'nlpconnect/vit-gpt2-image-captioning'
     """
     @staticmethod
     def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
@@ -203,6 +204,7 @@ class AIDetector:
         endpoint = f"https://api-inference.huggingface.co/models/{model_name}"
         headers = {
             "Authorization": f"Bearer {Config.HF_API_TOKEN}",
+            "Content-Type": "application/octet-stream"
         }
         try:
             with open(image_path, "rb") as f:
@@ -211,6 +213,7 @@ class AIDetector:
             logging.error(f"Cannot read image: {e}")
             return None
         try:
+            # We are sending the raw image bytes in the request body
             response = requests.post(endpoint, headers=headers, data=image_data, timeout=Config.API_TIMEOUT)
         except Exception as e:
             logging.error(f"Request to HF API failed: {e}")
@@ -220,10 +223,10 @@ class AIDetector:
             logging.warning("Rate limit hit for HuggingFace model")
             raise RateLimitException()
         if response.status_code == 503:
-            logging.info(f"Model {model_name} is loading.")
+            logging.info(f"Model {model_name} is loading. This can take a while if it's the first request.")
             return None
         if response.status_code == 404:
-            logging.error(f"Model {model_name} not found (404).")
+            logging.error(f"Model {model_name} not found (404). This often indicates the model is not deployed on the public inference API.")
             return None
         if response.status_code == 401:
             logging.error("Unauthorized (401) - check HF_API_TOKEN.")
