@@ -1,6 +1,6 @@
 """
 Yellow Car Detection Bot (REST HuggingFace API BLIP version)
-Detects yellow vehicles using 'Salesforce/blip-image-captioning-large'
+Detects yellow vehicles using 'nlpconnect/vit-gpt2-image-captioning'
 """
 
 import base64
@@ -41,7 +41,7 @@ class Config:
     REQUEST_DELAY = 1.0  # seconds
     
     # New model for the HuggingFace API
-    HF_MODEL = "Salesforce/blip-image-captioning-large"
+    HF_MODEL = "nlpconnect/vit-gpt2-image-captioning"
 
     @classmethod
     def validate(cls) -> bool:
@@ -195,7 +195,7 @@ class ImageProcessor:
 class AIDetector:
     """
     AI detection using Hugging Face's API-enabled image captioning model:
-    'Salesforce/blip-image-captioning-large'
+    'nlpconnect/vit-gpt2-image-captioning'
     """
     @staticmethod
     def detect_yellow_vehicle(image_path: Path) -> Optional[str]:
