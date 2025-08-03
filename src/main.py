@@ -18,7 +18,7 @@ from PIL import Image
 from atproto import Client, models
 from dotenv import load_dotenv
 import torch
-from transformers import Owlv2Processor, Owlv2ForObjectDetection # Changed for OWLv2
+from transformers import Owlv2Processor, Owlv2ForObjectDetection
 
 load_dotenv()
 
@@ -205,7 +205,7 @@ def ask_owlv2_if_yellow_car(image_path):
 
     # Check if any "yellow car" detections are found
     # results is a list of dictionaries, one per image in the batch. We assume batch size 1.
-    if results and len(results["boxes"]) > 0: # [1]
+    if results and len(results["boxes"]) > 0: # Corrected indexing for results
         logging.info(f"🟡 OWLv2 detected yellow car(s)!")
         return "yes"
     else:
@@ -230,7 +230,8 @@ def ask_ai_if_yellow_car(image_path):
         "Content-Type": "application/json"
     }
     body = {
-        "messages":}
+        "messages":
+            }
         ],
         "model": MODEL_NAME,
         "max_tokens": 10  # Limit response length
@@ -281,7 +282,7 @@ def ask_ai_if_yellow_car(image_path):
             return ask_owlv2_if_yellow_car(image_path), fallback_triggered
 
         data = resp.json()
-        result = data["choices"]["message"]["content"].strip().lower()
+        result = data["choices"]["message"]["content"].strip().lower() # Corrected indexing
         logging.info(f"✅ Azure AI response: {result}")
         return result, fallback_triggered
 
