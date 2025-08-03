@@ -39,7 +39,7 @@ BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
 MAX_RUNTIME_MINUTES = 20
 IMAGES_PER_SESSION = 30
 YELLOW_THRESHOLD = 150
-MIN_CLUSTER_SIZE = 80
+MIN_CLUSTER_SIZE = 120
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -152,16 +152,51 @@ def find_yellow_clusters(image_path, min_cluster_size=MIN_CLUSTER_SIZE):
         pixels = img.load()
         width, height = img.size
         yellow_count = 0
+        
+        # Track yellow pixel positions to check for rectangular clustering
+        yellow_pixels = []
 
         for y in range(0, height, 2):
             for x in range(0, width, 2):
                 r, g, b = pixels[x, y]
                 if r > YELLOW_THRESHOLD and g > YELLOW_THRESHOLD and b < 100:
                     yellow_count += 1
+                    yellow_pixels.append((x, y))
+                    
+                    # Early exit if we have enough pixels
                     if yellow_count >= min_cluster_size:
-                        return True
+                        # Additional validation: check if yellow pixels form reasonable clusters
+                        # (not just scattered road markings)
+                        if len(yellow_pixels) >= min_cluster_size:
+                            # Check for clustered distribution (not just thin lines)
+                            x_coords = [p[0] for p in yellow_pixels[-min_cluster_size:]]
+                            y_coords = [p[1] for p in yellow_pixels[-min_cluster_size:]]
+                            
+                            x_range = max(x_coords) - min(x_coords)
+                            y_range = max(y_coords) - min(y_coords)
+                            
+                            # Require both width and height (not just thin lines)
+                            # Road markings are typically very thin in one dimension
+                            if x_range > 20 and y_range > 15:  # Minimum rectangular area
+                                logging.debug(f"Yellow cluster found: {yellow_count} pixels, dimensions: {x_range}x{y_range}")
+                                return True
 
-        return yellow_count >= min_cluster_size
+        # Final check with all pixels if we didn't early exit
+        if yellow_count >= min_cluster_size and len(yellow_pixels) >= min_cluster_size:
+            x_coords = [p[0] for p in yellow_pixels]
+            y_coords = [p[1] for p in yellow_pixels]
+            
+            x_range = max(x_coords) - min(x_coords)
+            y_range = max(y_coords) - min(y_coords)
+            
+            # Require rectangular distribution
+            if x_range > 20 and y_range > 15:
+                logging.debug(f"Final yellow cluster found: {yellow_count} pixels, dimensions: {x_range}x{y_range}")
+                return True
+            else:
+                logging.debug(f"Yellow pixels too linear: {yellow_count} pixels, dimensions: {x_range}x{y_range}")
+
+        return False
     except Exception as e:
         logging.debug(f"Error processing {image_path}: {e}")
         return False
