@@ -360,7 +360,19 @@ def ask_ai_if_yellow_car(image_path):
         "messages": [
             {
                 "role": "user",
-                "content": f"Does this image show a yellow car? {image_data_url}"
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Does this image show a yellow car? Answer with only 'yes' or 'no'."
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_data_url,
+                            "detail": "low"  # Use low detail to reduce payload size
+                        }
+                    }
+                ]
             }
         ],
         "model": MODEL_NAME,
@@ -375,7 +387,7 @@ def ask_ai_if_yellow_car(image_path):
             # Try with much smaller image
             smaller_image_url = get_image_data_url(image_path, "jpg", max_size=(400, 300), quality=70)
             if smaller_image_url:
-                body["messages"][0]["content"] = f"Does this image show a yellow car? {smaller_image_url}"
+                body["messages"][0]["content"][1]["image_url"]["url"] = smaller_image_url
                 resp = requests.post(f"{ENDPOINT}/chat/completions", json=body, headers=headers, timeout=30)
                 
                 if resp.status_code == 413:
