@@ -31,6 +31,12 @@ HF_MODEL_URLS = [
     "https://api-inference.huggingface.co/models/facebook/detr-resnet-101",
 ]
 
+# Color classification models for yellow detection
+HF_COLOR_MODELS = [
+    "https://api-inference.huggingface.co/models/google/mobilenet_v2_1.0_224",
+    "https://api-inference.huggingface.co/models/microsoft/resnet-50",
+]
+
 TODAY_FOLDER = Path("today")
 TODAY_FOLDER.mkdir(exist_ok=True)
 WEBCAM_URLS_FILE = Path("valid_webcam_ids.txt")
@@ -164,7 +170,87 @@ def get_image_data_url(image_file, image_format):
         return None
 
 
-def check_for_car_in_detr_response(detections):
+def check_for_yellow_in_classification(classifications):
+    """Check if classification results suggest yellow objects or vehicles"""
+    yellow_related_terms = [
+        'yellow', 'golden', 'amber', 'lemon', 'canary', 'school bus', 
+        'taxi', 'cab', 'banana', 'gold', 'mustard', 'sunshine'
+    ]
+    
+    car_related_terms = [
+        'car', 'vehicle', 'automobile', 'sedan', 'coupe', 'hatchback',
+        'wagon', 'suv', 'taxi', 'cab', 'bus', 'van', 'truck'
+    ]
+    
+    for item in classifications:
+        label = item.get('label', '').lower()
+        score = item.get('score', 0)
+        
+        # Look for yellow-related terms with decent confidence
+        has_yellow = any(term in label for term in yellow_related_terms)
+        has_vehicle = any(term in label for term in car_related_terms)
+        
+        if has_yellow and score > 0.1:
+            logging.info(f"Found yellow-related classification: {label} (confidence: {score:.3f})")
+            if has_vehicle or score > 0.3:
+                return True
+        
+        # Special case for taxi/cab which are often yellow
+        if ('taxi' in label or 'cab' in label) and score > 0.2:
+            logging.info(f"Found taxi/cab classification: {label} (confidence: {score:.3f})")
+            return True
+    
+    return False
+
+
+def ask_color_classification_model(image_path):
+    """Use general image classification models to detect yellow cars"""
+    if not HF_API_TOKEN:
+        return None
+    
+    try:
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+    except Exception as e:
+        logging.error(f"Could not read image file: {e}")
+        return None
+    
+    headers = {
+        "Authorization": f"Bearer {HF_API_TOKEN}",
+    }
+    
+    # Try color classification models
+    for model_url in HF_COLOR_MODELS:
+        model_name = model_url.split('/')[-1]
+        logging.info(f"Trying color classification model: {model_name}")
+        
+        try:
+            response = requests.post(model_url, headers=headers, data=image_bytes, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                logging.debug(f"Classification response: {result}")
+                
+                has_yellow = check_for_yellow_in_classification(result)
+                if has_yellow:
+                    logging.info(f"✅ Color classification ({model_name}) detected yellow vehicle-related content!")
+                    return "yes"
+                else:
+                    logging.info(f"❌ Color classification ({model_name}) found no yellow vehicle content")
+                    continue
+                    
+            elif response.status_code == 503:
+                logging.warning(f"Model {model_name} is loading, trying next model...")
+                continue
+            else:
+                logging.warning(f"Model {model_name} returned {response.status_code}, trying next...")
+                continue
+                
+        except Exception as e:
+            logging.warning(f"Error with color model {model_name}: {e}")
+            continue
+    
+    return "no"
     """Check if DETR detected vehicle objects with strict filtering to prevent false positives"""
     vehicle_labels = {'car', 'truck', 'bus', 'motorcycle', 'van', 'vehicle'}
     
@@ -214,7 +300,7 @@ def check_for_car_in_detr_response(detections):
 
 
 def ask_facebook_ai_if_yellow_car(image_path):
-    """Fallback using Facebook DETR models via Hugging Face with strict filtering"""
+    """Enhanced fallback using both vehicle detection and color classification"""
     if not HF_API_TOKEN:
         logging.error("Hugging Face API token is not defined")
         return None
@@ -231,10 +317,11 @@ def ask_facebook_ai_if_yellow_car(image_path):
         "Content-Type": "image/jpeg"
     }
     
-    # Try each DETR model
+    # Step 1: Check if there are vehicles using DETR models
+    vehicles_detected = False
     for model_url in HF_MODEL_URLS:
         model_name = model_url.split('/')[-1]
-        logging.info(f"Trying Facebook DETR model: {model_name}")
+        logging.info(f"Checking for vehicles with DETR model: {model_name}")
         
         try:
             response = requests.post(model_url, headers=headers, data=image_bytes, timeout=30)
@@ -245,36 +332,73 @@ def ask_facebook_ai_if_yellow_car(image_path):
                 
                 has_car = check_for_car_in_detr_response(result)
                 if has_car:
-                    logging.info(f"✅ Facebook DETR ({model_name}) detected HIGH-CONFIDENCE vehicle!")
-                    # Additional check: ensure we have meaningful detections
-                    car_count = sum(1 for obj in result if 'car' in obj.get('label', '').lower() and obj.get('score', 0) > 0.7)
-                    if car_count > 0:
-                        logging.info(f"   Found {car_count} high-confidence car(s)")
-                        return "yes"
-                    else:
-                        logging.info("   No high-confidence cars found, continuing to next model...")
-                        continue
+                    logging.info(f"✅ DETR ({model_name}) detected HIGH-CONFIDENCE vehicle!")
+                    vehicles_detected = True
+                    break  # Found vehicles, proceed to color check
                 else:
-                    logging.info(f"❌ Facebook DETR ({model_name}) found no high-confidence vehicles")
-                    # Continue to next model
+                    logging.info(f"❌ DETR ({model_name}) found no high-confidence vehicles")
                     continue
                     
             elif response.status_code == 503:
-                logging.warning(f"Model {model_name} is loading, trying next model...")
+                logging.warning(f"DETR model {model_name} is loading, trying next...")
                 continue
-            elif response.status_code == 401:
-                logging.error("Unauthorized - check HF_API_TOKEN")
-                return None
             else:
-                logging.warning(f"Model {model_name} returned {response.status_code}, trying next...")
+                logging.warning(f"DETR model {model_name} returned {response.status_code}, trying next...")
                 continue
                 
         except Exception as e:
-            logging.warning(f"Error with model {model_name}: {e}")
+            logging.warning(f"Error with DETR model {model_name}: {e}")
             continue
     
-    # If we get here, no model detected a high-confidence vehicle
-    logging.info("🚫 No Facebook DETR models detected high-confidence vehicles")
+    # Step 2: If vehicles detected, check for yellow color
+    if vehicles_detected:
+        logging.info("🔍 Vehicles found! Now checking for yellow color...")
+        
+        # Try color classification models
+        for model_url in HF_COLOR_MODELS:
+            model_name = model_url.split('/')[-1]
+            logging.info(f"Checking for yellow with classification model: {model_name}")
+            
+            try:
+                response = requests.post(model_url, headers=headers, data=image_bytes, timeout=30)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    logging.debug(f"Classification response: {result}")
+                    
+                    has_yellow = check_for_yellow_in_classification(result)
+                    if has_yellow:
+                        logging.info(f"🟡 YELLOW CAR CONFIRMED by multi-model approach!")
+                        logging.info(f"   Vehicle detection: ✅ (DETR)")
+                        logging.info(f"   Yellow detection: ✅ ({model_name})")
+                        return "yes"
+                        
+                elif response.status_code == 503:
+                    logging.warning(f"Classification model {model_name} is loading, trying next...")
+                    continue
+                else:
+                    logging.warning(f"Classification model {model_name} returned {response.status_code}")
+                    continue
+                    
+            except Exception as e:
+                logging.warning(f"Error with classification model {model_name}: {e}")
+                continue
+        
+        # If we have vehicles but no yellow detected
+        logging.info("🚗 Vehicles detected but no strong yellow indicators found")
+        return "no"
+    
+    else:
+        # Step 3: If no vehicles detected by DETR, try direct color classification
+        # (might catch cases where DETR missed vehicles but there are yellow cars)
+        logging.info("🔍 No vehicles detected by DETR, trying direct color classification...")
+        color_result = ask_color_classification_model(image_path)
+        if color_result == "yes":
+            logging.info("🟡 Direct color classification suggests yellow vehicle content!")
+            return "yes"
+    
+    # If we get here, no yellow cars detected by any method
+    logging.info("🚫 No yellow cars detected by Facebook AI fallback models")
     return "no"
 
 
