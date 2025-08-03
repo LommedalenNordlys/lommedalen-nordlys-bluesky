@@ -46,6 +46,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Global variables for OWLv2 model (load once)
 owl_processor = None
 owl_model = None
+# Global variable to track if Azure is rate limited
+azure_rate_limited = False
 
 
 class RateLimitException(Exception):
@@ -342,7 +344,15 @@ def ask_owlv2_if_yellow_car(image_path):
 
 
 def ask_ai_if_yellow_car(image_path):
+    global azure_rate_limited
     fallback_triggered = False
+    
+    # Check if Azure is already rate limited
+    if azure_rate_limited:
+        logging.info("🔄 Azure previously rate limited - using OWLv2 fallback directly")
+        fallback_triggered = True
+        return ask_owlv2_if_yellow_car(image_path), fallback_triggered
+    
     if not TOKEN:
         logging.error("Azure API token is not defined")
         fallback_triggered = True
@@ -394,6 +404,17 @@ def ask_ai_if_yellow_car(image_path):
                     logging.error("Image still too large even after aggressive compression - switching to OWLv2")
                     fallback_triggered = True
                     return ask_owlv2_if_yellow_car(image_path), fallback_triggered
+                elif resp.status_code == 429:
+                    # Rate limited - mark Azure as unavailable and use fallback
+                    azure_rate_limited = True
+                    quota_remaining = resp.headers.get("x-ms-user-quota-remaining", "unknown")
+                    quota_resets_after = resp.headers.get("x-ms-user-quota-resets-after", "unknown")
+                    logging.warning("🚫 Rate limit hit (429) after resize - marking Azure as unavailable:")
+                    logging.warning(f"   Azure will be bypassed for remainder of session")
+                    logging.warning(f"   Quota remaining: {quota_remaining}")
+                    logging.warning(f"   Quota resets after: {quota_resets_after}")
+                    fallback_triggered = True
+                    return ask_owlv2_if_yellow_car(image_path), fallback_triggered
                 elif resp.status_code != 200:
                     logging.error(f"Azure API error after resize: {resp.status_code}")
                     fallback_triggered = True
@@ -410,10 +431,13 @@ def ask_ai_if_yellow_car(image_path):
                 return ask_owlv2_if_yellow_car(image_path), fallback_triggered
 
         if resp.status_code == 429:
+            # Rate limited - mark Azure as unavailable for rest of session
+            azure_rate_limited = True
             quota_remaining = resp.headers.get("x-ms-user-quota-remaining", "unknown")
             quota_resets_after = resp.headers.get("x-ms-user-quota-resets-after", "unknown")
 
-            logging.warning("🚫 Rate limit hit (429) - switching to OWLv2 fallback:")
+            logging.warning("🚫 Rate limit hit (429) - marking Azure as unavailable:")
+            logging.warning(f"   Azure will be bypassed for remainder of session")
             logging.warning(f"   Quota remaining: {quota_remaining}")
             logging.warning(f"   Quota resets after: {quota_resets_after}")
 
@@ -431,7 +455,7 @@ def ask_ai_if_yellow_car(image_path):
             except Exception as e:
                 logging.debug(f"Could not parse reset time: {e}")
 
-            logging.info("🔄 Switching to OWLv2 model...")
+            logging.info("🔄 Switching to OWLv2 model for remainder of session...")
             fallback_triggered = True
             return ask_owlv2_if_yellow_car(image_path), fallback_triggered
 
@@ -499,6 +523,10 @@ def main():
 
     logging.info(f"Starting Yellow Car Bot - will run for max {MAX_RUNTIME_MINUTES} minutes")
 
+    # Reset Azure rate limit status at start of each session
+    global azure_rate_limited
+    azure_rate_limited = False
+
     # Pre-load OWLv2 model if HF token is available
     if HF_API_TOKEN:
         if load_owlv2_model():
@@ -515,6 +543,13 @@ def main():
 
     logging.info(f"Resuming from position {current_index}/{len(urls)}")
     logging.info(f"All-time stats: {current_stats.get('total_processed', 0)} processed, {current_stats.get('total_posted', 0)} posted")
+    
+    if azure_rate_limited:
+        logging.info("⚠️  Azure API bypassed due to previous rate limiting")
+    elif TOKEN:
+        logging.info("✅ Azure API available")
+    else:
+        logging.info("⚠️  No Azure API token - using OWLv2 only")
 
     session_processed = 0
     session_yellow_found = 0
