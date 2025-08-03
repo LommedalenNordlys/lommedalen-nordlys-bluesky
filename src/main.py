@@ -178,7 +178,7 @@ def get_image_data_url(image_file, image_format):
 
 
 def ask_owlv2_if_yellow_car(image_path):
-    """Fixed OWLv2 fallback function that properly handles tensor results"""
+    """Strict OWLv2 fallback function that avoids false positives from road markings"""
     global owl_processor, owl_model
     
     if owl_processor is None or owl_model is None:
@@ -194,8 +194,9 @@ def ask_owlv2_if_yellow_car(image_path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     try:
-        text_queries = [["a yellow car"]]
-        logging.info(f"Querying OWLv2 with text: '{text_queries[0][0]}'")
+        # More specific queries to avoid road markings and other yellow objects
+        text_queries = [["a yellow car", "a yellow vehicle", "a yellow automobile", "a yellow taxi"]]
+        logging.info(f"Querying OWLv2 with multiple car-specific prompts")
 
         inputs = owl_processor(text=text_queries, images=image, return_tensors="pt").to(device)
 
@@ -204,35 +205,75 @@ def ask_owlv2_if_yellow_car(image_path):
 
         target_sizes = torch.Tensor([image.size[::-1]])  # (H, W)
 
+        # Use higher threshold for initial filtering
         results = owl_processor.post_process_object_detection(
             outputs=outputs,
             target_sizes=target_sizes,
-            threshold=0.1
+            threshold=0.25  # Increased from 0.1 to 0.25
         )
 
-        # Fixed: Properly check if any detections were made
+        # Strict validation: require high confidence AND reasonable bounding box
         if len(results) > 0 and len(results[0]["boxes"]) > 0:
             boxes = results[0]["boxes"]
             scores = results[0]["scores"]
             labels = results[0]["labels"]
             
-            # Check if any detection has sufficient confidence
+            image_width, image_height = image.size
             found_yellow_car = False
-            for i, score in enumerate(scores):
-                confidence = score.item()  # Convert tensor to Python float
-                if confidence > 0.15:  # Confidence threshold
-                    logging.info(f"🟡 OWLv2 detected yellow car with confidence: {confidence:.3f}")
-                    found_yellow_car = True
-                    break
+            
+            for i, (box, score, label) in enumerate(zip(boxes, scores, labels)):
+                confidence = score.item()
+                
+                # STRICT CONFIDENCE: Require very high confidence
+                if confidence < 0.35:  # Increased from 0.15 to 0.35
+                    continue
+                
+                # BOUNDING BOX VALIDATION: Check if box looks like a car
+                x1, y1, x2, y2 = box.tolist()
+                box_width = x2 - x1
+                box_height = y2 - y1
+                box_area = box_width * box_height
+                image_area = image_width * image_height
+                
+                # Box should be reasonable size (not tiny road markings, not entire image)
+                area_ratio = box_area / image_area
+                aspect_ratio = box_width / box_height if box_height > 0 else 0
+                
+                # Cars typically have aspect ratio between 1.2 and 3.0
+                # And should occupy reasonable portion of image (not tiny markings)
+                if (area_ratio < 0.005 or  # Too small (likely road marking)
+                    area_ratio > 0.8 or    # Too large (likely not a car)
+                    aspect_ratio < 0.8 or  # Too tall (not car-like)
+                    aspect_ratio > 4.0):   # Too wide (likely road marking)
+                    logging.debug(f"Rejected detection: area_ratio={area_ratio:.4f}, aspect_ratio={aspect_ratio:.2f}")
+                    continue
+                
+                # POSITION VALIDATION: Cars are usually not at very bottom (road markings area)
+                bottom_y_ratio = y2 / image_height
+                if bottom_y_ratio > 0.95:  # Very bottom of image (likely road marking)
+                    logging.debug(f"Rejected detection: too close to bottom edge")
+                    continue
+                
+                # If we get here, it's a high-confidence, well-positioned, car-shaped detection
+                label_text = text_queries[0][label.item()]
+                logging.info(f"🟡 HIGH-CONFIDENCE yellow car detected!")
+                logging.info(f"   Label: '{label_text}'")
+                logging.info(f"   Confidence: {confidence:.3f}")
+                logging.info(f"   Box area ratio: {area_ratio:.4f}")
+                logging.info(f"   Aspect ratio: {aspect_ratio:.2f}")
+                logging.info(f"   Position: ({x1:.0f},{y1:.0f}) to ({x2:.0f},{y2:.0f})")
+                
+                found_yellow_car = True
+                break
             
             if found_yellow_car:
-                logging.info(f"🟡 OWLv2 detected yellow car(s)!")
+                logging.info(f"🟡 OWLv2 CONFIRMED yellow car with strict validation!")
                 return "yes"
             else:
-                logging.info(f"🚫 OWLv2 detections below confidence threshold.")
+                logging.info(f"🚫 OWLv2 detections failed strict validation (likely road markings/false positives)")
                 return "no"
         else:
-            logging.info(f"🚫 OWLv2 found no yellow cars.")
+            logging.info(f"🚫 OWLv2 found no yellow cars above threshold.")
             return "no"
             
     except Exception as e:
