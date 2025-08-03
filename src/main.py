@@ -202,13 +202,38 @@ def find_yellow_clusters(image_path, min_cluster_size=MIN_CLUSTER_SIZE):
         return False
 
 
-def get_image_data_url(image_file, image_format):
+def get_image_data_url(image_file, image_format, max_size=(800, 600), quality=85):
+    """
+    Get base64 data URL for image, with automatic resizing to avoid 413 errors
+    """
     try:
-        with open(image_file, "rb") as f:
-            image_base64 = base64.b64encode(f.read()).decode()
-        return f"data:image/{image_format};base64,{image_base64}"
+        # Open and potentially resize image
+        with Image.open(image_file) as img:
+            img = img.convert('RGB')
+            
+            # Check if image needs resizing
+            original_size = img.size
+            if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
+                # Resize maintaining aspect ratio
+                img.thumbnail(max_size, Image.Resampling.LANCZOS)
+                logging.debug(f"Resized image from {original_size} to {img.size}")
+            
+            # Save to bytes with compression
+            import io
+            img_bytes = io.BytesIO()
+            img.save(img_bytes, format='JPEG', quality=quality, optimize=True)
+            img_bytes.seek(0)
+            
+            # Convert to base64
+            image_base64 = base64.b64encode(img_bytes.getvalue()).decode()
+            
+            # Log final size
+            final_size_kb = len(image_base64) * 3 / 4 / 1024  # Approximate KB
+            logging.debug(f"Final image payload: {final_size_kb:.1f} KB")
+            
+        return f"data:image/jpeg;base64,{image_base64}"
     except Exception as e:
-        logging.error(f"Could not read '{image_file}': {e}")
+        logging.error(f"Could not read/process '{image_file}': {e}")
         return None
 
 
@@ -323,7 +348,7 @@ def ask_ai_if_yellow_car(image_path):
         fallback_triggered = True
         return ask_owlv2_if_yellow_car(image_path), fallback_triggered
 
-    image_data_url = get_image_data_url(image_path, "jpg")
+    image_data_url = get_image_data_url(image_path, "jpg", max_size=(800, 600), quality=85)
     if not image_data_url:
         return None, fallback_triggered
 
@@ -344,6 +369,33 @@ def ask_ai_if_yellow_car(image_path):
 
     try:
         resp = requests.post(f"{ENDPOINT}/chat/completions", json=body, headers=headers, timeout=30)
+
+        if resp.status_code == 413:
+            logging.warning("🚫 Payload too large (413) - trying with smaller image...")
+            # Try with much smaller image
+            smaller_image_url = get_image_data_url(image_path, "jpg", max_size=(400, 300), quality=70)
+            if smaller_image_url:
+                body["messages"][0]["content"] = f"Does this image show a yellow car? {smaller_image_url}"
+                resp = requests.post(f"{ENDPOINT}/chat/completions", json=body, headers=headers, timeout=30)
+                
+                if resp.status_code == 413:
+                    logging.error("Image still too large even after aggressive compression - switching to OWLv2")
+                    fallback_triggered = True
+                    return ask_owlv2_if_yellow_car(image_path), fallback_triggered
+                elif resp.status_code != 200:
+                    logging.error(f"Azure API error after resize: {resp.status_code}")
+                    fallback_triggered = True
+                    return ask_owlv2_if_yellow_car(image_path), fallback_triggered
+                else:
+                    # Success with smaller image
+                    data = resp.json()
+                    result = data["choices"][0]["message"]["content"].strip().lower()
+                    logging.info(f"✅ Azure AI response (resized): {result}")
+                    return result, fallback_triggered
+            else:
+                logging.error("Could not create smaller image - switching to OWLv2")
+                fallback_triggered = True
+                return ask_owlv2_if_yellow_car(image_path), fallback_triggered
 
         if resp.status_code == 429:
             quota_remaining = resp.headers.get("x-ms-user-quota-remaining", "unknown")
@@ -399,7 +451,7 @@ def post_to_bluesky(image_path, alt_text):
         client = Client()
         client.login(BSKY_HANDLE.strip(), BSKY_PASSWORD.strip())
 
-        image_data_url = get_image_data_url(image_path, "jpg")
+        image_data_url = get_image_data_url(image_path, "jpg", max_size=(400, 300), quality=70)
         if not image_data_url:
             return False
 
