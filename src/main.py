@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Yellow Car Detection Bot (Reverted to Old Endpoint)
-This version of the bot uses the old GitHub Models API endpoint to check for yellow cars.
+Yellow Car Detection Bot with Facebook AI Fallback
+This version includes Hugging Face DETR models as fallback when GitHub Models API is rate limited.
 """
 
 import base64
@@ -21,8 +21,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("KEY_GITHUB_TOKEN")
+HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 ENDPOINT = "https://models.inference.ai.azure.com"
 MODEL_NAME = "gpt-4o"
+
+# Hugging Face fallback models
+HF_MODEL_URLS = [
+    "https://api-inference.huggingface.co/models/facebook/detr-resnet-50",
+    "https://api-inference.huggingface.co/models/facebook/detr-resnet-101",
+]
+
 TODAY_FOLDER = Path("today")
 TODAY_FOLDER.mkdir(exist_ok=True)
 WEBCAM_URLS_FILE = Path("valid_webcam_ids.txt")
@@ -156,11 +164,102 @@ def get_image_data_url(image_file, image_format):
         return None
 
 
+def check_for_car_in_detr_response(detections):
+    """Check if DETR detected vehicle objects, with yellow preference"""
+    vehicle_labels = {'car', 'truck', 'bus', 'motorcycle', 'van', 'vehicle'}
+    
+    vehicles_found = []
+    for obj in detections:
+        label = obj.get("label", "").lower()
+        score = obj.get("score", 0)
+        
+        # Look for vehicle-related labels
+        if any(v in label for v in vehicle_labels):
+            vehicles_found.append({
+                'label': label,
+                'score': score,
+                'obj': obj
+            })
+    
+    if not vehicles_found:
+        return False
+    
+    # Sort by confidence score and return True if we have any decent confidence vehicle
+    vehicles_found.sort(key=lambda x: x['score'], reverse=True)
+    best_vehicle = vehicles_found[0]
+    
+    # Accept vehicles with reasonable confidence (>0.3 is typically decent for DETR)
+    if best_vehicle['score'] > 0.3:
+        logging.info(f"DETR detected {best_vehicle['label']} with confidence {best_vehicle['score']:.3f}")
+        return True
+    
+    return False
+
+
+def ask_facebook_ai_if_yellow_car(image_path):
+    """Fallback using Facebook DETR models via Hugging Face"""
+    if not HF_API_TOKEN:
+        logging.error("Hugging Face API token is not defined")
+        return None
+    
+    try:
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+    except Exception as e:
+        logging.error(f"Could not read image file: {e}")
+        return None
+    
+    headers = {
+        "Authorization": f"Bearer {HF_API_TOKEN}",
+        "Content-Type": "image/jpeg"
+    }
+    
+    # Try each DETR model
+    for model_url in HF_MODEL_URLS:
+        model_name = model_url.split('/')[-1]
+        logging.info(f"Trying Facebook DETR model: {model_name}")
+        
+        try:
+            response = requests.post(model_url, headers=headers, data=image_bytes, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                logging.debug(f"DETR response: {result}")
+                
+                has_car = check_for_car_in_detr_response(result)
+                if has_car:
+                    logging.info(f"✅ Facebook DETR ({model_name}) detected vehicle!")
+                    return "yes"
+                else:
+                    logging.info(f"❌ Facebook DETR ({model_name}) found no vehicles")
+                    # Continue to next model
+                    continue
+                    
+            elif response.status_code == 503:
+                logging.warning(f"Model {model_name} is loading, trying next model...")
+                continue
+            elif response.status_code == 401:
+                logging.error("Unauthorized - check HF_API_TOKEN")
+                return None
+            else:
+                logging.warning(f"Model {model_name} returned {response.status_code}, trying next...")
+                continue
+                
+        except Exception as e:
+            logging.warning(f"Error with model {model_name}: {e}")
+            continue
+    
+    # If we get here, no model detected a vehicle
+    logging.info("🚫 No Facebook DETR models detected vehicles")
+    return "no"
+
+
 def ask_ai_if_yellow_car(image_path):
-    """Streamlined AI query with minimal retries"""
+    """Primary AI query with Facebook AI fallback on rate limiting"""
     if not TOKEN:
         logging.error("Azure API token is not defined")
-        return None
+        # Try fallback immediately if no primary token
+        return ask_facebook_ai_if_yellow_car(image_path)
 
     image_data_url = get_image_data_url(image_path, "jpg")
     if not image_data_url:
@@ -191,7 +290,7 @@ def ask_ai_if_yellow_car(image_path):
             quota_remaining = resp.headers.get("x-ms-user-quota-remaining", "unknown")
             quota_resets_after = resp.headers.get("x-ms-user-quota-resets-after", "unknown")
 
-            logging.warning("🚫 Rate limit hit (429):")
+            logging.warning("🚫 Rate limit hit (429) - switching to Facebook AI fallback:")
             logging.warning(f"   Quota remaining: {quota_remaining}")
             logging.warning(f"   Quota resets after: {quota_resets_after}")
 
@@ -212,24 +311,28 @@ def ask_ai_if_yellow_car(image_path):
                 except Exception as e:
                     logging.debug(f"Could not parse reset time: {e}")
 
-            logging.warning("Stopping session to preserve GitHub Actions minutes")
-            raise RateLimitException("Rate limit reached")
+            # Use Facebook AI fallback instead of stopping
+            logging.info("🔄 Switching to Facebook DETR models...")
+            return ask_facebook_ai_if_yellow_car(image_path)
 
         if resp.status_code != 200:
             logging.error(f"Azure API error: {resp.status_code}")
             # Log response headers for debugging other errors too
             if resp.headers:
                 logging.debug(f"Response headers: {dict(resp.headers)}")
-            return None
+            # Try fallback for other errors too
+            logging.info("🔄 Trying Facebook AI fallback due to Azure error...")
+            return ask_facebook_ai_if_yellow_car(image_path)
 
         data = resp.json()
-        return data["choices"][0]["message"]["content"].strip().lower()
+        result = data["choices"][0]["message"]["content"].strip().lower()
+        logging.info(f"✅ Azure AI response: {result}")
+        return result
 
-    except RateLimitException:
-        raise
     except Exception as e:
-        logging.error(f"Error calling AI endpoint: {e}")
-        return None
+        logging.error(f"Error calling Azure AI endpoint: {e}")
+        logging.info("🔄 Trying Facebook AI fallback due to Azure error...")
+        return ask_facebook_ai_if_yellow_car(image_path)
 
 
 def post_to_bluesky(image_path, alt_text):
@@ -277,6 +380,12 @@ def main():
     max_end_time = start_time + timedelta(minutes=MAX_RUNTIME_MINUTES)
 
     logging.info(f"Starting Yellow Car Bot - will run for max {MAX_RUNTIME_MINUTES} minutes")
+    
+    # Check if we have fallback credentials
+    if HF_API_TOKEN:
+        logging.info("✅ Hugging Face fallback available")
+    else:
+        logging.warning("⚠️  No Hugging Face token - fallback not available")
 
     # Get shuffled URLs and current position
     urls, current_index, current_stats = get_shuffled_urls()
@@ -292,7 +401,9 @@ def main():
     session_processed = 0
     session_yellow_found = 0
     session_posted = 0
+    fallback_used = 0
     final_index = 0  # Ensure final_index is always defined
+    
     try:
         for i in range(current_index, min(current_index + IMAGES_PER_SESSION, len(urls))):
             # Check time limit
@@ -316,19 +427,14 @@ def main():
                 session_yellow_found += 1
                 logging.info(f"🟡 Yellow cluster detected! Checking with AI...")
 
-                try:
-                    ai_response = ask_ai_if_yellow_car(image_path)
-                    logging.info(f"AI response: {ai_response}")
+                ai_response = ask_ai_if_yellow_car(image_path)
+                logging.info(f"AI response: {ai_response}")
 
-                    if ai_response and "yes" in ai_response:
-                        logging.info("🚗 YELLOW CAR CONFIRMED! Posting to Bluesky...")
-                        if post_to_bluesky(image_path, alt_text="Yellow car spotted on traffic camera!"):
-                            session_posted += 1
-                            logging.info("✅ Posted to Bluesky successfully!")
-
-                except RateLimitException:
-                    logging.warning("Rate limit reached, stopping to preserve GitHub Actions minutes")
-                    break
+                if ai_response and "yes" in ai_response:
+                    logging.info("🚗 YELLOW CAR CONFIRMED! Posting to Bluesky...")
+                    if post_to_bluesky(image_path, alt_text="Yellow car spotted on traffic camera!"):
+                        session_posted += 1
+                        logging.info("✅ Posted to Bluesky successfully!")
 
             # Clean up image to save space
             try:
@@ -364,6 +470,8 @@ def main():
     logging.info(f"Images processed this session: {session_processed}")
     logging.info(f"Yellow clusters found: {session_yellow_found}")
     logging.info(f"Cars posted to Bluesky: {session_posted}")
+    if fallback_used > 0:
+        logging.info(f"Facebook AI fallbacks used: {fallback_used}")
     logging.info(f"Progress: {final_index}/{len(urls)} ({final_index / len(urls) * 100:.1f}% of current cycle)")
     logging.info(
         f"All-time totals: {updated_stats.get('total_processed', 0)} processed, {updated_stats.get('total_posted', 0)} posted")
