@@ -94,7 +94,6 @@ def get_shuffled_urls():
         state["current_index"] = 0
         cycle_num = state.get("cycle_count", 0) + 1
         state["cycle_count"] = cycle_num
-        logging.info(f"Starting cycle #{cycle_num}")
         save_shuffle_state(state)
 
     return state["shuffled_urls"], state["current_index"], state.get("stats", {"total_processed": 0, "total_posted": 0})
@@ -216,22 +215,22 @@ def ask_owlv2_if_yellow_car(image_path):
 
 def ask_ai_if_yellow_car(image_path):
     """Primary AI query with OWLv2 fallback on rate limiting"""
+    fallback_triggered = False # Flag to indicate if fallback was used
     if not TOKEN:
         logging.error("Azure API token is not defined")
-        # Try fallback immediately if no primary token
-        return ask_owlv2_if_yellow_car(image_path)
+        fallback_triggered = True
+        return ask_owlv2_if_yellow_car(image_path), fallback_triggered
 
     image_data_url = get_image_data_url(image_path, "jpg")
     if not image_data_url:
-        return None
+        return None, fallback_triggered # Return None and False if image data is bad
 
     headers = {
         "Authorization": f"Bearer {TOKEN}",
         "Content-Type": "application/json"
     }
     body = {
-        "messages":
-            }
+        "messages":}
         ],
         "model": MODEL_NAME,
         "max_tokens": 10  # Limit response length
@@ -268,7 +267,8 @@ def ask_ai_if_yellow_car(image_path):
 
             # Use OWLv2 fallback instead of stopping
             logging.info("🔄 Switching to OWLv2 model...")
-            return ask_owlv2_if_yellow_car(image_path)
+            fallback_triggered = True
+            return ask_owlv2_if_yellow_car(image_path), fallback_triggered
 
         if resp.status_code!= 200:
             logging.error(f"Azure API error: {resp.status_code}")
@@ -277,17 +277,19 @@ def ask_ai_if_yellow_car(image_path):
                 logging.debug(f"Response headers: {dict(resp.headers)}")
             # Try fallback for other errors too
             logging.info("🔄 Trying OWLv2 fallback due to Azure error...")
-            return ask_owlv2_if_yellow_car(image_path)
+            fallback_triggered = True
+            return ask_owlv2_if_yellow_car(image_path), fallback_triggered
 
         data = resp.json()
         result = data["choices"]["message"]["content"].strip().lower()
         logging.info(f"✅ Azure AI response: {result}")
-        return result
+        return result, fallback_triggered
 
     except Exception as e:
         logging.error(f"Error calling Azure AI endpoint: {e}")
         logging.info("🔄 Trying OWLv2 fallback due to Azure error...")
-        return ask_owlv2_if_yellow_car(image_path)
+        fallback_triggered = True
+        return ask_owlv2_if_yellow_car(image_path), fallback_triggered
 
 
 def post_to_bluesky(image_path, alt_text):
@@ -377,8 +379,10 @@ def main():
                 session_yellow_found += 1
                 logging.info(f"🟡 Yellow cluster detected! Checking with AI...")
 
-                ai_response = ask_ai_if_yellow_car(image_path)
+                ai_response, was_fallback_used = ask_ai_if_yellow_car(image_path)
                 logging.info(f"AI response: {ai_response}")
+                if was_fallback_used:
+                    fallback_used += 1
 
                 if ai_response and "yes" in ai_response:
                     logging.info("🚗 YELLOW CAR CONFIRMED! Posting to Bluesky...")
