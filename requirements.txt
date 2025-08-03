@@ -4,3 +4,4 @@ atproto
 Pillow
 torch
 transformers
+scipy
