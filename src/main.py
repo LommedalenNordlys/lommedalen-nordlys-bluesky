@@ -59,11 +59,11 @@ def load_shuffle_state():
                 state = json.load(f)
                 # Validate state structure
                 if not isinstance(state.get("shuffled_urls"), list):
-                    return {"shuffled_urls":, "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
+                    return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
                 return state
         except Exception as e:
             logging.warning(f"Could not load shuffle state: {e}")
-    return {"shuffled_urls":, "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
+    return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
 
 
 def save_shuffle_state(state):
@@ -79,7 +79,7 @@ def get_shuffled_urls():
     """Get URLs in shuffled order, reshuffling when list is exhausted"""
     if not WEBCAM_URLS_FILE.exists():
         logging.error(f"Webcam URLs file not found: {WEBCAM_URLS_FILE}")
-        return, 0, {}
+        return [], 0, {}
 
     with open(WEBCAM_URLS_FILE, "r") as f:
         all_urls = [line.strip() for line in f if line.strip()]
@@ -205,7 +205,7 @@ def ask_grounding_dino_if_yellow_car(image_path):
     ) # [1]
 
     # Check if any "yellow car" detections are found
-    if results and results["boxes"].shape > 0: # Corrected indexing for shape
+    if results and len(results[0]["boxes"]) > 0: # Corrected indexing for shape
         logging.info(f"🟡 Grounding DINO detected yellow car(s)!")
         return "yes"
     else:
@@ -229,7 +229,26 @@ def ask_ai_if_yellow_car(image_path):
         "Content-Type": "application/json"
     }
     body = {
-        "messages":}
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a yellow car detection assistant. Respond only with 'yes' if you see a yellow car in the image, or 'no' if you don't see a yellow car."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Is there a yellow car in this image?"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_data_url
+                        }
+                    }
+                ]
+            }
         ],
         "model": MODEL_NAME,
         "max_tokens": 10  # Limit response length
@@ -248,7 +267,7 @@ def ask_ai_if_yellow_car(image_path):
             logging.warning(f"   Quota resets after: {quota_resets_after}")
 
             # Try to parse the reset time for a more user-friendly message
-            if quota_resets_after!= "unknown":
+            if quota_resets_after != "unknown":
                 try:
                     from datetime import datetime
                     reset_time = datetime.fromisoformat(quota_resets_after.replace('Z', '+00:00'))
@@ -268,7 +287,7 @@ def ask_ai_if_yellow_car(image_path):
             logging.info("🔄 Switching to Grounding DINO model...")
             return ask_grounding_dino_if_yellow_car(image_path)
 
-        if resp.status_code!= 200:
+        if resp.status_code != 200:
             logging.error(f"Azure API error: {resp.status_code}")
             # Log response headers for debugging other errors too
             if resp.headers:
@@ -278,7 +297,7 @@ def ask_ai_if_yellow_car(image_path):
             return ask_grounding_dino_if_yellow_car(image_path)
 
         data = resp.json()
-        result = data["choices"]["message"]["content"].strip().lower() # Corrected indexing
+        result = data["choices"][0]["message"]["content"].strip().lower() # Corrected indexing
         logging.info(f"✅ Azure AI response: {result}")
         return result
 
@@ -312,7 +331,12 @@ def post_to_bluesky(image_path, alt_text):
                 text="GUL BIL!",
                 created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 embed=models.AppBskyEmbedImages.Main(
-                    images=
+                    images=[
+                        models.AppBskyEmbedImages.Image(
+                            alt=alt_text,
+                            image=blob
+                        )
+                    ]
                 )
             )
         )
@@ -419,7 +443,7 @@ def main():
     logging.info(f"Yellow clusters found: {session_yellow_found}")
     logging.info(f"Cars posted to Bluesky: {session_posted}")
     if fallback_used > 0:
-        logging.info(f"Facebook AI fallbacks used: {fallback_used}")
+        logging.info(f"Grounding DINO fallbacks used: {fallback_used}")
     logging.info(f"Progress: {final_index}/{len(urls)} ({final_index / len(urls) * 100:.1f}% of current cycle)")
     logging.info(
         f"All-time totals: {updated_stats.get('total_processed', 0)} processed, {updated_stats.get('total_posted', 0)} posted")
