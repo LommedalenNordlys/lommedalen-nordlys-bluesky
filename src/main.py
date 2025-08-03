@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Yellow Car Detection Bot with Hugging Face Grounding DINO Fallback
-This version includes Hugging Face Grounding DINO as fallback when GitHub Models API is rate limited.
+Yellow Car Detection Bot with Hugging Face OWLv2 Fallback
+This version includes Hugging Face OWLv2 as fallback when GitHub Models API is rate limited.
 """
 
 import base64
@@ -17,8 +17,8 @@ import requests
 from PIL import Image
 from atproto import Client, models
 from dotenv import load_dotenv
-import torch # Added for Grounding DINO
-from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection # Added for Grounding DINO
+import torch
+from transformers import Owlv2Processor, Owlv2ForObjectDetection # Changed for OWLv2
 
 load_dotenv()
 
@@ -27,8 +27,8 @@ HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 ENDPOINT = "https://models.inference.ai.azure.com"
 MODEL_NAME = "gpt-4o"
 
-# Grounding DINO model for zero-shot fallback
-GROUNDING_DINO_MODEL_ID = "IDEA-Research/grounding-dino-base" # [1]
+# OWLv2 model for zero-shot fallback
+OWL_V2_MODEL_ID = "google/owlv2-base-patch16-ensemble" # [1]
 
 TODAY_FOLDER = Path("today")
 TODAY_FOLDER.mkdir(exist_ok=True)
@@ -59,11 +59,11 @@ def load_shuffle_state():
                 state = json.load(f)
                 # Validate state structure
                 if not isinstance(state.get("shuffled_urls"), list):
-                    return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
+                    return {"shuffled_urls":, "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
                 return state
         except Exception as e:
             logging.warning(f"Could not load shuffle state: {e}")
-    return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
+    return {"shuffled_urls":, "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
 
 
 def save_shuffle_state(state):
@@ -79,7 +79,7 @@ def get_shuffled_urls():
     """Get URLs in shuffled order, reshuffling when list is exhausted"""
     if not WEBCAM_URLS_FILE.exists():
         logging.error(f"Webcam URLs file not found: {WEBCAM_URLS_FILE}")
-        return [], 0, {}
+        return, 0, {}
 
     with open(WEBCAM_URLS_FILE, "r") as f:
         all_urls = [line.strip() for line in f if line.strip()]
@@ -163,62 +163,63 @@ def get_image_data_url(image_file, image_format):
         return None
 
 
-def ask_grounding_dino_if_yellow_car(image_path):
-    """Use Grounding DINO for zero-shot yellow car detection."""
+def ask_owlv2_if_yellow_car(image_path):
+    """Use OWLv2 for zero-shot yellow car detection."""
     if not HF_API_TOKEN:
-        logging.error("Hugging Face API token is not defined for Grounding DINO.")
+        logging.error("Hugging Face API token is not defined for OWLv2.")
         return None
 
     try:
         image = Image.open(image_path).convert("RGB")
     except Exception as e:
-        logging.error(f"Could not load image for Grounding DINO: {e}")
+        logging.error(f"Could not load image for OWLv2: {e}")
         return None
 
     # Load processor and model
-    # Using 'cuda' if available, otherwise 'cpu' for device selection [1]
+    # Using 'cuda' if available, otherwise 'cpu' for device selection
     device = "cuda" if torch.cuda.is_available() else "cpu"
     try:
-        processor = AutoProcessor.from_pretrained(GROUNDING_DINO_MODEL_ID) # [1]
-        model = AutoModelForZeroShotObjectDetection.from_pretrained(GROUNDING_DINO_MODEL_ID).to(device) # [1]
+        processor = Owlv2Processor.from_pretrained(OWL_V2_MODEL_ID) # [1]
+        model = Owlv2ForObjectDetection.from_pretrained(OWL_V2_MODEL_ID).to(device) # [1]
     except Exception as e:
-        logging.error(f"Failed to load Grounding DINO model or processor: {e}")
+        logging.error(f"Failed to load OWLv2 model or processor: {e}")
         return None
 
-    # Define the text query for "yellow car". Grounding DINO queries must be lowercased and end with a dot. [1]
-    text_query = "a yellow car." # [1]
-    logging.info(f"Querying Grounding DINO with text: '{text_query}'")
+    # Define the text query for "yellow car". OWLv2 expects a list of lists for text queries. [1]
+    text_queries = [["a yellow car"]] # [1]
+    logging.info(f"Querying OWLv2 with text: '{text_queries}'")
 
-    inputs = processor(images=image, text=text_query, return_tensors="pt").to(device) # [1]
+    inputs = processor(text=text_queries, images=image, return_tensors="pt").to(device) # [1]
 
     with torch.no_grad():
         outputs = model(**inputs) # [1]
 
-    # Post-process results with thresholds. Adjust thresholds as needed for your specific use case. [1]
-    # box_threshold and text_threshold can be tuned.
-    results = processor.post_process_grounded_object_detection(
-        outputs,
-        inputs.input_ids,
-        box_threshold=0.4, # Example threshold, can be adjusted
-        text_threshold=0.3, # Example threshold, can be adjusted
-        target_sizes=[image.size[::-1]]
+    # Target image sizes (height, width) to rescale box predictions [batch_size, 2]
+    target_sizes = torch.Tensor([image.size[::-1]]) # [1]
+
+    # Post-process results with a threshold. Adjust threshold as needed for your specific use case. [1]
+    results = processor.post_process_object_detection(
+        outputs=outputs,
+        target_sizes=target_sizes,
+        threshold=0.1 # Example threshold, can be adjusted [1]
     ) # [1]
 
     # Check if any "yellow car" detections are found
-    if results and len(results[0]["boxes"]) > 0: # Corrected indexing for shape
-        logging.info(f"🟡 Grounding DINO detected yellow car(s)!")
+    # results is a list of dictionaries, one per image in the batch. We assume batch size 1.
+    if results and len(results["boxes"]) > 0: # [1]
+        logging.info(f"🟡 OWLv2 detected yellow car(s)!")
         return "yes"
     else:
-        logging.info(f"🚫 Grounding DINO found no yellow cars.")
+        logging.info(f"🚫 OWLv2 found no yellow cars.")
         return "no"
 
 
 def ask_ai_if_yellow_car(image_path):
-    """Primary AI query with Grounding DINO fallback on rate limiting"""
+    """Primary AI query with OWLv2 fallback on rate limiting"""
     if not TOKEN:
         logging.error("Azure API token is not defined")
         # Try fallback immediately if no primary token
-        return ask_grounding_dino_if_yellow_car(image_path)
+        return ask_owlv2_if_yellow_car(image_path)
 
     image_data_url = get_image_data_url(image_path, "jpg")
     if not image_data_url:
@@ -229,25 +230,7 @@ def ask_ai_if_yellow_car(image_path):
         "Content-Type": "application/json"
     }
     body = {
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a yellow car detection assistant. Respond only with 'yes' if you see a yellow car in the image, or 'no' if you don't see a yellow car."
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Is there a yellow car in this image?"
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": image_data_url
-                        }
-                    }
-                ]
+        "messages":
             }
         ],
         "model": MODEL_NAME,
@@ -262,12 +245,12 @@ def ask_ai_if_yellow_car(image_path):
             quota_remaining = resp.headers.get("x-ms-user-quota-remaining", "unknown")
             quota_resets_after = resp.headers.get("x-ms-user-quota-resets-after", "unknown")
 
-            logging.warning("🚫 Rate limit hit (429) - switching to Grounding DINO fallback:")
+            logging.warning("🚫 Rate limit hit (429) - switching to OWLv2 fallback:")
             logging.warning(f"   Quota remaining: {quota_remaining}")
             logging.warning(f"   Quota resets after: {quota_resets_after}")
 
             # Try to parse the reset time for a more user-friendly message
-            if quota_resets_after != "unknown":
+            if quota_resets_after!= "unknown":
                 try:
                     from datetime import datetime
                     reset_time = datetime.fromisoformat(quota_resets_after.replace('Z', '+00:00'))
@@ -283,28 +266,28 @@ def ask_ai_if_yellow_car(image_path):
                 except Exception as e:
                     logging.debug(f"Could not parse reset time: {e}")
 
-            # Use Grounding DINO fallback instead of stopping
-            logging.info("🔄 Switching to Grounding DINO model...")
-            return ask_grounding_dino_if_yellow_car(image_path)
+            # Use OWLv2 fallback instead of stopping
+            logging.info("🔄 Switching to OWLv2 model...")
+            return ask_owlv2_if_yellow_car(image_path)
 
-        if resp.status_code != 200:
+        if resp.status_code!= 200:
             logging.error(f"Azure API error: {resp.status_code}")
             # Log response headers for debugging other errors too
             if resp.headers:
                 logging.debug(f"Response headers: {dict(resp.headers)}")
             # Try fallback for other errors too
-            logging.info("🔄 Trying Grounding DINO fallback due to Azure error...")
-            return ask_grounding_dino_if_yellow_car(image_path)
+            logging.info("🔄 Trying OWLv2 fallback due to Azure error...")
+            return ask_owlv2_if_yellow_car(image_path)
 
         data = resp.json()
-        result = data["choices"][0]["message"]["content"].strip().lower() # Corrected indexing
+        result = data["choices"]["message"]["content"].strip().lower()
         logging.info(f"✅ Azure AI response: {result}")
         return result
 
     except Exception as e:
         logging.error(f"Error calling Azure AI endpoint: {e}")
-        logging.info("🔄 Trying Grounding DINO fallback due to Azure error...")
-        return ask_grounding_dino_if_yellow_car(image_path)
+        logging.info("🔄 Trying OWLv2 fallback due to Azure error...")
+        return ask_owlv2_if_yellow_car(image_path)
 
 
 def post_to_bluesky(image_path, alt_text):
@@ -331,12 +314,7 @@ def post_to_bluesky(image_path, alt_text):
                 text="GUL BIL!",
                 created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 embed=models.AppBskyEmbedImages.Main(
-                    images=[
-                        models.AppBskyEmbedImages.Image(
-                            alt=alt_text,
-                            image=blob
-                        )
-                    ]
+                    images=
                 )
             )
         )
@@ -443,7 +421,7 @@ def main():
     logging.info(f"Yellow clusters found: {session_yellow_found}")
     logging.info(f"Cars posted to Bluesky: {session_posted}")
     if fallback_used > 0:
-        logging.info(f"Grounding DINO fallbacks used: {fallback_used}")
+        logging.info(f"OWLv2 fallbacks used: {fallback_used}")
     logging.info(f"Progress: {final_index}/{len(urls)} ({final_index / len(urls) * 100:.1f}% of current cycle)")
     logging.info(
         f"All-time totals: {updated_stats.get('total_processed', 0)} processed, {updated_stats.get('total_posted', 0)} posted")
