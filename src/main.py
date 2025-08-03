@@ -165,7 +165,7 @@ def get_image_data_url(image_file, image_format):
 
 
 def check_for_car_in_detr_response(detections):
-    """Check if DETR detected vehicle objects, with yellow preference"""
+    """Check if DETR detected vehicle objects with strict filtering to prevent false positives"""
     vehicle_labels = {'car', 'truck', 'bus', 'motorcycle', 'van', 'vehicle'}
     
     vehicles_found = []
@@ -184,20 +184,37 @@ def check_for_car_in_detr_response(detections):
     if not vehicles_found:
         return False
     
-    # Sort by confidence score and return True if we have any decent confidence vehicle
+    # Sort by confidence score 
     vehicles_found.sort(key=lambda x: x['score'], reverse=True)
-    best_vehicle = vehicles_found[0]
     
-    # Accept vehicles with reasonable confidence (>0.3 is typically decent for DETR)
-    if best_vehicle['score'] > 0.3:
-        logging.info(f"DETR detected {best_vehicle['label']} with confidence {best_vehicle['score']:.3f}")
+    # Much stricter requirements to prevent false positives:
+    # 1. Higher confidence threshold (0.7 instead of 0.3)
+    # 2. Must specifically be "car" (not truck/bus which are less likely to be yellow)
+    # 3. Multiple vehicles increase confidence
+    
+    car_detections = [v for v in vehicles_found if 'car' in v['label'] and v['score'] > 0.7]
+    
+    if car_detections:
+        best_car = car_detections[0]
+        logging.info(f"DETR detected {best_car['label']} with HIGH confidence {best_car['score']:.3f}")
         return True
+    
+    # Also check for multiple lower-confidence vehicles (could indicate real traffic)
+    high_conf_vehicles = [v for v in vehicles_found if v['score'] > 0.5]
+    if len(high_conf_vehicles) >= 2:
+        logging.info(f"DETR detected {len(high_conf_vehicles)} vehicles with moderate confidence")
+        return True
+    
+    # Log what we found but rejected
+    if vehicles_found:
+        best = vehicles_found[0]
+        logging.info(f"DETR found {best['label']} but confidence too low: {best['score']:.3f} (need >0.7 for cars)")
     
     return False
 
 
 def ask_facebook_ai_if_yellow_car(image_path):
-    """Fallback using Facebook DETR models via Hugging Face"""
+    """Fallback using Facebook DETR models via Hugging Face with strict filtering"""
     if not HF_API_TOKEN:
         logging.error("Hugging Face API token is not defined")
         return None
@@ -228,10 +245,17 @@ def ask_facebook_ai_if_yellow_car(image_path):
                 
                 has_car = check_for_car_in_detr_response(result)
                 if has_car:
-                    logging.info(f"✅ Facebook DETR ({model_name}) detected vehicle!")
-                    return "yes"
+                    logging.info(f"✅ Facebook DETR ({model_name}) detected HIGH-CONFIDENCE vehicle!")
+                    # Additional check: ensure we have meaningful detections
+                    car_count = sum(1 for obj in result if 'car' in obj.get('label', '').lower() and obj.get('score', 0) > 0.7)
+                    if car_count > 0:
+                        logging.info(f"   Found {car_count} high-confidence car(s)")
+                        return "yes"
+                    else:
+                        logging.info("   No high-confidence cars found, continuing to next model...")
+                        continue
                 else:
-                    logging.info(f"❌ Facebook DETR ({model_name}) found no vehicles")
+                    logging.info(f"❌ Facebook DETR ({model_name}) found no high-confidence vehicles")
                     # Continue to next model
                     continue
                     
@@ -249,8 +273,8 @@ def ask_facebook_ai_if_yellow_car(image_path):
             logging.warning(f"Error with model {model_name}: {e}")
             continue
     
-    # If we get here, no model detected a vehicle
-    logging.info("🚫 No Facebook DETR models detected vehicles")
+    # If we get here, no model detected a high-confidence vehicle
+    logging.info("🚫 No Facebook DETR models detected high-confidence vehicles")
     return "no"
 
 
