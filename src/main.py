@@ -43,9 +43,38 @@ MIN_CLUSTER_SIZE = 80
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Global variables for OWLv2 model (load once)
+owl_processor = None
+owl_model = None
+
 
 class RateLimitException(Exception):
     pass
+
+
+def load_owlv2_model():
+    """Load OWLv2 model and processor once at startup"""
+    global owl_processor, owl_model
+    
+    if owl_processor is not None and owl_model is not None:
+        return True
+        
+    if not HF_API_TOKEN:
+        logging.error("Hugging Face API token is not defined for OWLv2.")
+        return False
+    
+    try:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        logging.info(f"Loading OWLv2 model on device: {device}")
+        
+        owl_processor = Owlv2Processor.from_pretrained(OWL_V2_MODEL_ID)
+        owl_model = Owlv2ForObjectDetection.from_pretrained(OWL_V2_MODEL_ID).to(device)
+        
+        logging.info("✅ OWLv2 model loaded successfully")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to load OWLv2 model or processor: {e}")
+        return False
 
 
 def load_shuffle_state():
@@ -149,9 +178,12 @@ def get_image_data_url(image_file, image_format):
 
 
 def ask_owlv2_if_yellow_car(image_path):
-    if not HF_API_TOKEN:
-        logging.error("Hugging Face API token is not defined for OWLv2.")
-        return None
+    """Fixed OWLv2 fallback function that properly handles tensor results"""
+    global owl_processor, owl_model
+    
+    if owl_processor is None or owl_model is None:
+        if not load_owlv2_model():
+            return None
 
     try:
         image = Image.open(image_path).convert("RGB")
@@ -160,35 +192,52 @@ def ask_owlv2_if_yellow_car(image_path):
         return None
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    
     try:
-        processor = Owlv2Processor.from_pretrained(OWL_V2_MODEL_ID)
-        model = Owlv2ForObjectDetection.from_pretrained(OWL_V2_MODEL_ID).to(device)
+        text_queries = [["a yellow car"]]
+        logging.info(f"Querying OWLv2 with text: '{text_queries[0][0]}'")
+
+        inputs = owl_processor(text=text_queries, images=image, return_tensors="pt").to(device)
+
+        with torch.no_grad():
+            outputs = owl_model(**inputs)
+
+        target_sizes = torch.Tensor([image.size[::-1]])  # (H, W)
+
+        results = owl_processor.post_process_object_detection(
+            outputs=outputs,
+            target_sizes=target_sizes,
+            threshold=0.1
+        )
+
+        # Fixed: Properly check if any detections were made
+        if len(results) > 0 and len(results[0]["boxes"]) > 0:
+            boxes = results[0]["boxes"]
+            scores = results[0]["scores"]
+            labels = results[0]["labels"]
+            
+            # Check if any detection has sufficient confidence
+            found_yellow_car = False
+            for i, score in enumerate(scores):
+                confidence = score.item()  # Convert tensor to Python float
+                if confidence > 0.15:  # Confidence threshold
+                    logging.info(f"🟡 OWLv2 detected yellow car with confidence: {confidence:.3f}")
+                    found_yellow_car = True
+                    break
+            
+            if found_yellow_car:
+                logging.info(f"🟡 OWLv2 detected yellow car(s)!")
+                return "yes"
+            else:
+                logging.info(f"🚫 OWLv2 detections below confidence threshold.")
+                return "no"
+        else:
+            logging.info(f"🚫 OWLv2 found no yellow cars.")
+            return "no"
+            
     except Exception as e:
-        logging.error(f"Failed to load OWLv2 model or processor: {e}")
+        logging.error(f"Error in OWLv2 processing: {e}")
         return None
-
-    text_queries = [["a yellow car"]]
-    logging.info(f"Querying OWLv2 with text: '{text_queries}'")
-
-    inputs = processor(text=text_queries, images=image, return_tensors="pt").to(device)
-
-    with torch.no_grad():
-        outputs = model(**inputs)
-
-    target_sizes = torch.Tensor([image.size[::-1]])
-
-    results = processor.post_process_object_detection(
-        outputs=outputs,
-        target_sizes=target_sizes,
-        threshold=0.1
-    )
-
-    if results and results[0]["boxes"]:
-        logging.info(f"🟡 OWLv2 detected yellow car(s)!")
-        return "yes"
-    else:
-        logging.info(f"🚫 OWLv2 found no yellow cars.")
-        return "no"
 
 
 def ask_ai_if_yellow_car(image_path):
@@ -310,8 +359,12 @@ def main():
 
     logging.info(f"Starting Yellow Car Bot - will run for max {MAX_RUNTIME_MINUTES} minutes")
 
+    # Pre-load OWLv2 model if HF token is available
     if HF_API_TOKEN:
-        logging.info("✅ Hugging Face fallback available")
+        if load_owlv2_model():
+            logging.info("✅ Hugging Face OWLv2 fallback ready")
+        else:
+            logging.warning("⚠️  Failed to load OWLv2 - fallback not available")
     else:
         logging.warning("⚠️  No Hugging Face token - fallback not available")
 
