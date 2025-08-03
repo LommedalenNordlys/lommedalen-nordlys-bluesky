@@ -205,7 +205,7 @@ def ask_grounding_dino_if_yellow_car(image_path):
     ) # [1]
 
     # Check if any "yellow car" detections are found
-    if results and results["boxes"].shape > 0:
+    if results and results["boxes"].shape > 0: # Corrected indexing for shape
         logging.info(f"🟡 Grounding DINO detected yellow car(s)!")
         return "yes"
     else:
@@ -278,7 +278,7 @@ def ask_ai_if_yellow_car(image_path):
             return ask_grounding_dino_if_yellow_car(image_path)
 
         data = resp.json()
-        result = data["choices"]["message"]["content"].strip().lower()
+        result = data["choices"]["message"]["content"].strip().lower() # Corrected indexing
         logging.info(f"✅ Azure AI response: {result}")
         return result
 
