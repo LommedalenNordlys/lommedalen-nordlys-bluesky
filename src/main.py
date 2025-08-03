@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Yellow Car Detection Bot with Facebook AI Fallback
-This version includes Hugging Face DETR models as fallback when GitHub Models API is rate limited.
+Yellow Car Detection Bot with Hugging Face Grounding DINO Fallback
+This version includes Hugging Face Grounding DINO as fallback when GitHub Models API is rate limited.
 """
 
 import base64
@@ -17,6 +17,8 @@ import requests
 from PIL import Image
 from atproto import Client, models
 from dotenv import load_dotenv
+import torch # Added for Grounding DINO
+from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection # Added for Grounding DINO
 
 load_dotenv()
 
@@ -25,17 +27,8 @@ HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 ENDPOINT = "https://models.inference.ai.azure.com"
 MODEL_NAME = "gpt-4o"
 
-# Hugging Face fallback models
-HF_MODEL_URLS = [
-    "https://api-inference.huggingface.co/models/facebook/detr-resnet-50",
-    "https://api-inference.huggingface.co/models/facebook/detr-resnet-101",
-]
-
-# Color classification models for yellow detection
-HF_COLOR_MODELS = [
-    "https://api-inference.huggingface.co/models/google/mobilenet_v2_1.0_224",
-    "https://api-inference.huggingface.co/models/microsoft/resnet-50",
-]
+# Grounding DINO model for zero-shot fallback
+GROUNDING_DINO_MODEL_ID = "IDEA-Research/grounding-dino-base" # [1]
 
 TODAY_FOLDER = Path("today")
 TODAY_FOLDER.mkdir(exist_ok=True)
@@ -66,11 +59,11 @@ def load_shuffle_state():
                 state = json.load(f)
                 # Validate state structure
                 if not isinstance(state.get("shuffled_urls"), list):
-                    return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
+                    return {"shuffled_urls":, "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
                 return state
         except Exception as e:
             logging.warning(f"Could not load shuffle state: {e}")
-    return {"shuffled_urls": [], "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
+    return {"shuffled_urls":, "current_index": 0, "stats": {"total_processed": 0, "total_posted": 0}}
 
 
 def save_shuffle_state(state):
@@ -86,7 +79,7 @@ def get_shuffled_urls():
     """Get URLs in shuffled order, reshuffling when list is exhausted"""
     if not WEBCAM_URLS_FILE.exists():
         logging.error(f"Webcam URLs file not found: {WEBCAM_URLS_FILE}")
-        return [], 0, {}
+        return, 0, {}
 
     with open(WEBCAM_URLS_FILE, "r") as f:
         all_urls = [line.strip() for line in f if line.strip()]
@@ -170,244 +163,62 @@ def get_image_data_url(image_file, image_format):
         return None
 
 
-def check_for_yellow_in_classification(classifications):
-    """Check if classification results suggest yellow objects or vehicles"""
-    yellow_related_terms = [
-        'yellow', 'golden', 'amber', 'lemon', 'canary', 'school bus', 
-        'taxi', 'cab', 'banana', 'gold', 'mustard', 'sunshine'
-    ]
-    
-    car_related_terms = [
-        'car', 'vehicle', 'automobile', 'sedan', 'coupe', 'hatchback',
-        'wagon', 'suv', 'taxi', 'cab', 'bus', 'van', 'truck'
-    ]
-    
-    for item in classifications:
-        label = item.get('label', '').lower()
-        score = item.get('score', 0)
-        
-        # Look for yellow-related terms with decent confidence
-        has_yellow = any(term in label for term in yellow_related_terms)
-        has_vehicle = any(term in label for term in car_related_terms)
-        
-        if has_yellow and score > 0.1:
-            logging.info(f"Found yellow-related classification: {label} (confidence: {score:.3f})")
-            if has_vehicle or score > 0.3:
-                return True
-        
-        # Special case for taxi/cab which are often yellow
-        if ('taxi' in label or 'cab' in label) and score > 0.2:
-            logging.info(f"Found taxi/cab classification: {label} (confidence: {score:.3f})")
-            return True
-    
-    return False
-
-
-def ask_color_classification_model(image_path):
-    """Use general image classification models to detect yellow cars"""
+def ask_grounding_dino_if_yellow_car(image_path):
+    """Use Grounding DINO for zero-shot yellow car detection."""
     if not HF_API_TOKEN:
+        logging.error("Hugging Face API token is not defined for Grounding DINO.")
         return None
-    
-    try:
-        with open(image_path, "rb") as f:
-            image_bytes = f.read()
-    except Exception as e:
-        logging.error(f"Could not read image file: {e}")
-        return None
-    
-    headers = {
-        "Authorization": f"Bearer {HF_API_TOKEN}",
-    }
-    
-    # Try color classification models
-    for model_url in HF_COLOR_MODELS:
-        model_name = model_url.split('/')[-1]
-        logging.info(f"Trying color classification model: {model_name}")
-        
-        try:
-            response = requests.post(model_url, headers=headers, data=image_bytes, timeout=30)
-            
-            if response.status_code == 200:
-                result = response.json()
-                logging.debug(f"Classification response: {result}")
-                
-                has_yellow = check_for_yellow_in_classification(result)
-                if has_yellow:
-                    logging.info(f"✅ Color classification ({model_name}) detected yellow vehicle-related content!")
-                    return "yes"
-                else:
-                    logging.info(f"❌ Color classification ({model_name}) found no yellow vehicle content")
-                    continue
-                    
-            elif response.status_code == 503:
-                logging.warning(f"Model {model_name} is loading, trying next model...")
-                continue
-            else:
-                logging.warning(f"Model {model_name} returned {response.status_code}, trying next...")
-                continue
-                
-        except Exception as e:
-            logging.warning(f"Error with color model {model_name}: {e}")
-            continue
-    
-    return "no"
-    """Check if DETR detected vehicle objects with strict filtering to prevent false positives"""
-    vehicle_labels = {'car', 'truck', 'bus', 'motorcycle', 'van', 'vehicle'}
-    
-    vehicles_found = []
-    for obj in detections:
-        label = obj.get("label", "").lower()
-        score = obj.get("score", 0)
-        
-        # Look for vehicle-related labels
-        if any(v in label for v in vehicle_labels):
-            vehicles_found.append({
-                'label': label,
-                'score': score,
-                'obj': obj
-            })
-    
-    if not vehicles_found:
-        return False
-    
-    # Sort by confidence score 
-    vehicles_found.sort(key=lambda x: x['score'], reverse=True)
-    
-    # Much stricter requirements to prevent false positives:
-    # 1. Higher confidence threshold (0.7 instead of 0.3)
-    # 2. Must specifically be "car" (not truck/bus which are less likely to be yellow)
-    # 3. Multiple vehicles increase confidence
-    
-    car_detections = [v for v in vehicles_found if 'car' in v['label'] and v['score'] > 0.7]
-    
-    if car_detections:
-        best_car = car_detections[0]
-        logging.info(f"DETR detected {best_car['label']} with HIGH confidence {best_car['score']:.3f}")
-        return True
-    
-    # Also check for multiple lower-confidence vehicles (could indicate real traffic)
-    high_conf_vehicles = [v for v in vehicles_found if v['score'] > 0.5]
-    if len(high_conf_vehicles) >= 2:
-        logging.info(f"DETR detected {len(high_conf_vehicles)} vehicles with moderate confidence")
-        return True
-    
-    # Log what we found but rejected
-    if vehicles_found:
-        best = vehicles_found[0]
-        logging.info(f"DETR found {best['label']} but confidence too low: {best['score']:.3f} (need >0.7 for cars)")
-    
-    return False
 
-
-def ask_facebook_ai_if_yellow_car(image_path):
-    """Enhanced fallback using both vehicle detection and color classification"""
-    if not HF_API_TOKEN:
-        logging.error("Hugging Face API token is not defined")
-        return None
-    
     try:
-        with open(image_path, "rb") as f:
-            image_bytes = f.read()
+        image = Image.open(image_path).convert("RGB")
     except Exception as e:
-        logging.error(f"Could not read image file: {e}")
+        logging.error(f"Could not load image for Grounding DINO: {e}")
         return None
-    
-    headers = {
-        "Authorization": f"Bearer {HF_API_TOKEN}",
-        "Content-Type": "image/jpeg"
-    }
-    
-    # Step 1: Check if there are vehicles using DETR models
-    vehicles_detected = False
-    for model_url in HF_MODEL_URLS:
-        model_name = model_url.split('/')[-1]
-        logging.info(f"Checking for vehicles with DETR model: {model_name}")
-        
-        try:
-            response = requests.post(model_url, headers=headers, data=image_bytes, timeout=30)
-            
-            if response.status_code == 200:
-                result = response.json()
-                logging.debug(f"DETR response: {result}")
-                
-                has_car = check_for_car_in_detr_response(result)
-                if has_car:
-                    logging.info(f"✅ DETR ({model_name}) detected HIGH-CONFIDENCE vehicle!")
-                    vehicles_detected = True
-                    break  # Found vehicles, proceed to color check
-                else:
-                    logging.info(f"❌ DETR ({model_name}) found no high-confidence vehicles")
-                    continue
-                    
-            elif response.status_code == 503:
-                logging.warning(f"DETR model {model_name} is loading, trying next...")
-                continue
-            else:
-                logging.warning(f"DETR model {model_name} returned {response.status_code}, trying next...")
-                continue
-                
-        except Exception as e:
-            logging.warning(f"Error with DETR model {model_name}: {e}")
-            continue
-    
-    # Step 2: If vehicles detected, check for yellow color
-    if vehicles_detected:
-        logging.info("🔍 Vehicles found! Now checking for yellow color...")
-        
-        # Try color classification models
-        for model_url in HF_COLOR_MODELS:
-            model_name = model_url.split('/')[-1]
-            logging.info(f"Checking for yellow with classification model: {model_name}")
-            
-            try:
-                response = requests.post(model_url, headers=headers, data=image_bytes, timeout=30)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    logging.debug(f"Classification response: {result}")
-                    
-                    has_yellow = check_for_yellow_in_classification(result)
-                    if has_yellow:
-                        logging.info(f"🟡 YELLOW CAR CONFIRMED by multi-model approach!")
-                        logging.info(f"   Vehicle detection: ✅ (DETR)")
-                        logging.info(f"   Yellow detection: ✅ ({model_name})")
-                        return "yes"
-                        
-                elif response.status_code == 503:
-                    logging.warning(f"Classification model {model_name} is loading, trying next...")
-                    continue
-                else:
-                    logging.warning(f"Classification model {model_name} returned {response.status_code}")
-                    continue
-                    
-            except Exception as e:
-                logging.warning(f"Error with classification model {model_name}: {e}")
-                continue
-        
-        # If we have vehicles but no yellow detected
-        logging.info("🚗 Vehicles detected but no strong yellow indicators found")
-        return "no"
-    
+
+    # Load processor and model
+    # Using 'cuda' if available, otherwise 'cpu' for device selection [1]
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        processor = AutoProcessor.from_pretrained(GROUNDING_DINO_MODEL_ID) # [1]
+        model = AutoModelForZeroShotObjectDetection.from_pretrained(GROUNDING_DINO_MODEL_ID).to(device) # [1]
+    except Exception as e:
+        logging.error(f"Failed to load Grounding DINO model or processor: {e}")
+        return None
+
+    # Define the text query for "yellow car". Grounding DINO queries must be lowercased and end with a dot. [1]
+    text_query = "a yellow car." # [1]
+    logging.info(f"Querying Grounding DINO with text: '{text_query}'")
+
+    inputs = processor(images=image, text=text_query, return_tensors="pt").to(device) # [1]
+
+    with torch.no_grad():
+        outputs = model(**inputs) # [1]
+
+    # Post-process results with thresholds. Adjust thresholds as needed for your specific use case. [1]
+    # box_threshold and text_threshold can be tuned.
+    results = processor.post_process_grounded_object_detection(
+        outputs,
+        inputs.input_ids,
+        box_threshold=0.4, # Example threshold, can be adjusted
+        text_threshold=0.3, # Example threshold, can be adjusted
+        target_sizes=[image.size[::-1]]
+    ) # [1]
+
+    # Check if any "yellow car" detections are found
+    if results and results["boxes"].shape > 0:
+        logging.info(f"🟡 Grounding DINO detected yellow car(s)!")
+        return "yes"
     else:
-        # Step 3: If no vehicles detected by DETR, try direct color classification
-        # (might catch cases where DETR missed vehicles but there are yellow cars)
-        logging.info("🔍 No vehicles detected by DETR, trying direct color classification...")
-        color_result = ask_color_classification_model(image_path)
-        if color_result == "yes":
-            logging.info("🟡 Direct color classification suggests yellow vehicle content!")
-            return "yes"
-    
-    # If we get here, no yellow cars detected by any method
-    logging.info("🚫 No yellow cars detected by Facebook AI fallback models")
-    return "no"
+        logging.info(f"🚫 Grounding DINO found no yellow cars.")
+        return "no"
 
 
 def ask_ai_if_yellow_car(image_path):
-    """Primary AI query with Facebook AI fallback on rate limiting"""
+    """Primary AI query with Grounding DINO fallback on rate limiting"""
     if not TOKEN:
         logging.error("Azure API token is not defined")
         # Try fallback immediately if no primary token
-        return ask_facebook_ai_if_yellow_car(image_path)
+        return ask_grounding_dino_if_yellow_car(image_path)
 
     image_data_url = get_image_data_url(image_path, "jpg")
     if not image_data_url:
@@ -418,13 +229,7 @@ def ask_ai_if_yellow_car(image_path):
         "Content-Type": "application/json"
     }
     body = {
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant. Answer with only 'yes' or 'no'."},
-            {"role": "user", "content": [
-                {"type": "text",
-                 "text": "Is there a yellow car visible in this traffic camera image? Answer only 'yes' or 'no'."},
-                {"type": "image_url", "image_url": {"url": image_data_url, "detail": "low"}}
-            ]}
+        "messages":}
         ],
         "model": MODEL_NAME,
         "max_tokens": 10  # Limit response length
@@ -438,12 +243,12 @@ def ask_ai_if_yellow_car(image_path):
             quota_remaining = resp.headers.get("x-ms-user-quota-remaining", "unknown")
             quota_resets_after = resp.headers.get("x-ms-user-quota-resets-after", "unknown")
 
-            logging.warning("🚫 Rate limit hit (429) - switching to Facebook AI fallback:")
+            logging.warning("🚫 Rate limit hit (429) - switching to Grounding DINO fallback:")
             logging.warning(f"   Quota remaining: {quota_remaining}")
             logging.warning(f"   Quota resets after: {quota_resets_after}")
 
             # Try to parse the reset time for a more user-friendly message
-            if quota_resets_after != "unknown":
+            if quota_resets_after!= "unknown":
                 try:
                     from datetime import datetime
                     reset_time = datetime.fromisoformat(quota_resets_after.replace('Z', '+00:00'))
@@ -459,28 +264,28 @@ def ask_ai_if_yellow_car(image_path):
                 except Exception as e:
                     logging.debug(f"Could not parse reset time: {e}")
 
-            # Use Facebook AI fallback instead of stopping
-            logging.info("🔄 Switching to Facebook DETR models...")
-            return ask_facebook_ai_if_yellow_car(image_path)
+            # Use Grounding DINO fallback instead of stopping
+            logging.info("🔄 Switching to Grounding DINO model...")
+            return ask_grounding_dino_if_yellow_car(image_path)
 
-        if resp.status_code != 200:
+        if resp.status_code!= 200:
             logging.error(f"Azure API error: {resp.status_code}")
             # Log response headers for debugging other errors too
             if resp.headers:
                 logging.debug(f"Response headers: {dict(resp.headers)}")
             # Try fallback for other errors too
-            logging.info("🔄 Trying Facebook AI fallback due to Azure error...")
-            return ask_facebook_ai_if_yellow_car(image_path)
+            logging.info("🔄 Trying Grounding DINO fallback due to Azure error...")
+            return ask_grounding_dino_if_yellow_car(image_path)
 
         data = resp.json()
-        result = data["choices"][0]["message"]["content"].strip().lower()
+        result = data["choices"]["message"]["content"].strip().lower()
         logging.info(f"✅ Azure AI response: {result}")
         return result
 
     except Exception as e:
         logging.error(f"Error calling Azure AI endpoint: {e}")
-        logging.info("🔄 Trying Facebook AI fallback due to Azure error...")
-        return ask_facebook_ai_if_yellow_car(image_path)
+        logging.info("🔄 Trying Grounding DINO fallback due to Azure error...")
+        return ask_grounding_dino_if_yellow_car(image_path)
 
 
 def post_to_bluesky(image_path, alt_text):
@@ -507,12 +312,7 @@ def post_to_bluesky(image_path, alt_text):
                 text="GUL BIL!",
                 created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 embed=models.AppBskyEmbedImages.Main(
-                    images=[
-                        models.AppBskyEmbedImages.Image(
-                            alt=alt_text,
-                            image=blob
-                        )
-                    ]
+                    images=
                 )
             )
         )
