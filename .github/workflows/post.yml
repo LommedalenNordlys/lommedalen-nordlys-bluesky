@@ -1,15 +1,13 @@
-name: "Yellow Car Bot - Budget Optimized"
+name: "Lommedalen Aurora Borealis Bot"
 
 on:
   schedule:
-    # Run 3 times per day to spread out the 814 cameras fairly
-    - cron: "0 6 * * *"   # 6 AM UTC
-    - cron: "0 14 * * *"  # 2 PM UTC
-    - cron: "0 22 * * *"  # 10 PM UTC
+    # Run every 30 minutes (all hours); darkness gate inside code exits fast if daylight.
+    - cron: "*/30 * * * *"
   workflow_dispatch:  # Manual trigger for testing
 
 jobs:
-  yellow-car-detector:
+  aurora-detector:
     runs-on: ubuntu-latest
     timeout-minutes: 25  # Hard limit slightly above our target
 
@@ -43,13 +41,15 @@ jobs:
           restore-keys: |
             shuffle-state-v2-
 
-      - name: Run Yellow Car Detection
+      - name: Run Aurora Detection
         run: python src/main.py
         env:
           BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
           BSKY_PASSWORD: ${{ secrets.BSKY_PASSWORD }}
           KEY_GITHUB_TOKEN: ${{ secrets.KEY_GITHUB_TOKEN }}
-          HF_API_TOKEN: ${{ secrets.HF_API_TOKEN }}
+          SUN_LAT: 59.95
+          SUN_LNG: 10.466667
+          MIN_KP: 4
 
       - name: Save shuffle state
         uses: actions/cache@v4
@@ -67,7 +67,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: yellow-car-logs-${{ github.run_number }}
+          name: aurora-logs-${{ github.run_number }}
           path: |
             *.log
           retention-days: 3

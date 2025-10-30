@@ -1,0 +1,46 @@
+{
+    "webcams": [
+        {
+            "place": "Tryvann North West",
+            "urls": [
+                "https://www.yr.no/webcams/1/2000/tryvann/1.jpg"
+            ]
+        },
+        {
+            "place": "Tryvann North",
+            "urls": [
+                "https://www.yr.no/webcams/1/2000/tryvann/2.jpg"
+            ]
+        },
+        {
+            "place": "Tryvann South East",
+            "urls": [
+                "https://www.yr.no/webcams/1/2000/tryvann/4.jpg"
+            ]
+        },
+        {
+            "place": "Tryvann South",
+            "urls": [
+                "https://www.yr.no/webcams/1/2000/tryvann/5.jpg"
+            ]
+        },
+        {
+            "place": "Tryvann West",
+            "urls": [
+                "https://www.yr.no/webcams/1/2000/tryvann/5.jpg"
+            ]
+        },
+        {
+            "place": "Sylling North",
+            "urls": [
+                "https://www.yr.no/webcams/1/2000/sylling/1.jpg"
+            ]
+        },
+        {
+            "place": "Sylling South",
+            "urls": [
+                "https://www.yr.no/webcams/1/2000/sylling/2.jpg"
+            ]
+        }
+    ]
+}

@@ -1,21 +1,37 @@
-# Yellow Car Bot 🚕
+# Aurora Borealis Bot 🌌
 
-An automated bot that monitors Norwegian traffic cameras for yellow cars and posts them to Bluesky with the classic Norwegian phrase "GUL BIL!" (Yellow Car!).
+An automated bot that monitors webcams in the Oslo area for aurora borealis (northern lights) and posts them to Bluesky when detected. It now performs a darkness check (astronomical → nautical → civil twilight) before any forecast or image processing to avoid wasting resources in daylight.
 
 ## How It Works
 
-1. **Downloads images** from 814 Norwegian traffic cameras
-2. **Detects yellow clusters** using computer vision
-3. **Confirms with AI** whether the yellow object is actually a car
-4. **Posts to Bluesky** with "GUL BIL!" when a yellow car is found
+1. **Darkness Gate** – Fetches sunrise/sunset & twilight boundaries; exits early if it isn't dark enough.
+2. **(Optional) NOAA Forecast Gate** – Can be re-enabled to further skip when probability is zero.
+3. **Image Download** – Pulls current frames from configured public webcams.
+4. **Color Pre-filter** – Fast heuristic for aurora-like greens/purples to reduce AI calls.
+5. **AI Confirmation** – GPT‑4o Vision answers yes/no for aurora presence; handles resize & rate limits.
+6. **Posting** – Uploads confirmed aurora with location metadata to Bluesky.
+
+## Monitoring Locations (Current)
+
+Defined per view in `webcam_locations.json`:
+- Tryvann North West
+- Tryvann North
+- Tryvann South East
+- Tryvann South
+- Tryvann West (shares camera with South for now)
+- Sylling North
+- Sylling South
 
 ## Features
 
-- **Fair Processing**: Shuffles camera order to ensure all cameras get processed at different times of day
-- **Budget Optimized**: Designed to stay within GitHub Actions' 2000 minutes/month limit
-- **Rate Limit Aware**: Gracefully handles API rate limiting
-- **Persistent State**: Remembers progress between runs
-- **Statistics Tracking**: Monitors detection rates and posting success
+- **Darkness Gate**: Skips processing entirely when twilight data indicates it's still light.
+- **Optional NOAA Forecast Integration**: Can be toggled back in if desired.
+- **Location Tracking**: Each post includes the view where aurora was detected.
+- **Fair Processing**: Shuffles webcam order to vary observation times.
+- **Color Pre-filtering**: Quick scan for aurora-like colors before AI check.
+- **Rate Limit Handling**: Gracefully handles API 429 & image size 413 responses.
+- **Persistent State**: Remembers progress between runs.
+- **Statistics Tracking**: Detection and posting counters.
 
 ## Setup
 
@@ -24,11 +40,11 @@ An automated bot that monitors Norwegian traffic cameras for yellow cars and pos
 your-repo/
 ├── src/
 │   └── main.py
+├── webcam_locations.json
 ├── requirements.txt
-├── valid_webcam_ids.txt
 ├── .github/
 │   └── workflows/
-│       └── yellow-car-bot.yml
+│       └── aurora-bot.yml
 └── README.md
 ```
 
@@ -42,13 +58,8 @@ Pillow
 atproto
 ```
 
-**valid_webcam_ids.txt**:
-One traffic camera URL per line (814 URLs total). Example:
-```
-https://webkamera.atlas.vegvesen.no/public/kamera?id=3000063_1
-https://webkamera.atlas.vegvesen.no/public/kamera?id=3001004_1
-...
-```
+**webcam_locations.json**:
+Contains webcam URLs organized by location (see included file).
 
 ### 3. GitHub Secrets
 
@@ -69,96 +80,73 @@ Set up these secrets in your repository (Settings → Secrets and variables → 
 Edit these variables in `src/main.py`:
 
 ```python
-MAX_RUNTIME_MINUTES = 20  # Max runtime per session
-IMAGES_PER_SESSION = 30   # Images to process per session
-YELLOW_THRESHOLD = 150    # Yellow detection sensitivity (lower = more sensitive)
-MIN_CLUSTER_SIZE = 80     # Minimum yellow pixels to trigger AI check
-```
-
+MAX_RUNTIME_MINUTES = 20    # Max runtime per session
+IMAGES_PER_SESSION = 30     # Images to process per session
 ## Schedule
 
-The bot runs **3 times per day**:
-- 6:00 AM UTC
-- 2:00 PM UTC
-- 10:00 PM UTC
+GitHub Actions currently runs every 30 minutes during typical dark hours. Because the code now performs a dynamic darkness check, you can optionally widen the cron schedule (e.g. run 24/7) and rely on fast early exits.
+## How the Detection Works
 
-**Budget**: ~63 minutes/day, ~1,890 minutes/month (within 2000 limit)
+## Pipeline Overview
 
-**Coverage**: All 814 cameras processed every 9 days in randomized order
+1. Darkness check (sunrise-sunset API)
+2. (Optional) NOAA forecast gate
+3. Download image & color heuristic
+4. AI verification (yes/no) with resizing & retry
+5. Post confirmed aurora
 
-## How the Shuffling Works
+## Aurora Detection Details
 
-1. **First Run**: Shuffles all 814 camera URLs randomly
-2. **Subsequent Runs**: Continues from where it left off
-3. **Cycle Complete**: When all URLs processed, reshuffles for next cycle
-4. **Fair Distribution**: Each camera gets processed at different times across cycles
-
-## Statistics
-
-The bot tracks:
-- Total images processed (all-time)
-- Yellow clusters detected
-- Cars confirmed by AI
-- Successful Bluesky posts
-- Processing progress through current cycle
-
-## Yellow Detection Algorithm
-
-**Two-stage process**:
-
-1. **Computer Vision Filter**:
-    - Scans image pixels for yellow clusters
-    - Uses RGB thresholds: R>150, G>150, B<100
-    - Requires minimum 80 yellow pixels
-    - Samples every 2nd pixel for speed
-
-2. **AI Confirmation**:
-    - Only triggered if yellow cluster found
-    - Uses GPT-4o Vision to confirm it's actually a car
-    - Receives simple "yes/no" response
-
+The bot looks for:
+- **Green aurora**: Bright green dominant colors in the sky
+- **Purple/Pink aurora**: Reddish-purple glows
+- **Night sky context**: Only valid in dark conditions
+- **Natural patterns**: Distinguishes from artificial lights
 ## Troubleshooting
 
 ### Common Issues
 
-**"Rate limit reached"**:
-- Bot automatically stops to preserve GitHub Actions minutes
-- Will resume in next scheduled run
+**"Not dark enough"** – Expected during daylight/twilight; bot exits quickly.
+**"AI response: no"** – Color heuristic can flag vegetation or lights; AI filter reduces false positives.
+**"Rate limit (429)"** – Azure quota exceeded; bot skips more AI calls until next run.
+**"413 payload too large"** – Image auto-compressed & retried.
+**"Webcam unavailable"** – Temporary outage; skipped.
+**"No aurora colors detected"** – Normal; aurora is rare.
 
-**"Shuffle state not found"**:
-- Normal on first run
-- Bot will create new shuffle and start processing
+### Best Conditions for Aurora
 
-**"No yellow cluster detected"**:
-- Most images won't have yellow cars - this is normal
-- Adjust `YELLOW_THRESHOLD` if too sensitive/insensitive
-
-### Logs
-
-Check workflow logs for:
-- Processing progress
-- Detection statistics
-- Error messages
-- Session summaries
+- **Dark skies**: Late evening through early morning
+- **High KP-index**: Check aurora forecasts
+- **Clear weather**: Clouds will block view
+- **Winter months**: Longer dark periods
 
 ### Manual Testing
 
 Trigger a manual run:
 1. Go to Actions tab
-2. Select "Yellow Car Bot - Budget Optimized"
+2. Select "Aurora Borealis Bot"
 3. Click "Run workflow"
 
 ## File Descriptions
 
 - **`src/main.py`**: Main bot logic
+- **`webcam_locations.json`**: Webcam URLs with location data
 - **`requirements.txt`**: Python dependencies
-- **`valid_webcam_ids.txt`**: List of traffic camera URLs
-- **`.github/workflows/yellow-car-bot.yml`**: GitHub Actions workflow
+- **`.github/workflows/`**: GitHub Actions workflow
 - **`shuffle_state.json`**: Persistent state (auto-generated)
 
-## Privacy & Ethics
+## Webcam Sources
 
-- Only processes public traffic camera feeds
+- Tryvann: yr.no public webcams (directional views)
+- Sylling: yr.no public webcams
+## Resources
+
+- [NOAA OVATION Aurora Forecast](https://services.swpc.noaa.gov/json/ovation_aurora_latest.json) - Real-time data used by the bot
+- [Space Weather Prediction Center](https://www.swpc.noaa.gov/) - Official NOAA space weather site
+- [Aurora forecast for Norway](https://www.aurora-service.eu/aurora-forecast/) - Additional forecast source
+- [Bluesky API Documentation](https://docs.bsky.app/) - Bluesky API reference
+
+- Only processes public webcam feeds
 - No personal data collected or stored
 - Images deleted immediately after processing
 - Respects API rate limits and terms of service
@@ -166,18 +154,24 @@ Trigger a manual run:
 ## Contributing
 
 Feel free to:
-- Adjust detection parameters for better accuracy
-- Add more traffic cameras to the list
-- Improve the yellow detection algorithm
-- Enhance error handling
+- Add/remove webcam views
+- Tune color thresholds (`check_for_aurora_colors`)
+- Re-enable NOAA forecast gate
+- Add posting cooldowns or batching
+
+## Resources
+
+- [Space Weather Prediction Center](https://www.swpc.noaa.gov/)
+- [Aurora forecast for Norway](https://www.aurora-service.eu/aurora-forecast/)
+- [Bluesky API Documentation](https://docs.bsky.app/)
 
 ## License
 
-This project is for educational and entertainment purposes. Please respect:
-- Traffic camera usage terms
+This project is for educational and aurora spotting purposes. Please respect:
+- Webcam usage terms
 - Bluesky community guidelines
 - API rate limits and quotas
 
 ---
 
-**Lykke til med GUL BIL-jakten!** 🚕
+**Lykke til med nordlys-jakten!** 🌌✨

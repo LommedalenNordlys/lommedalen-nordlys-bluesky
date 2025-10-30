@@ -131,5 +131,26 @@ dist
 # Intellij IDEA
 .idea
 
-# testing locally
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Bot-specific files
 today/
+shuffle_state.json
+*.jpg
+*.png
+*.jpeg
+
+# OS files
+.DS_Store
+Thumbs.db
