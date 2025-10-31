@@ -1,11 +1,11 @@
 [tool.poetry]
-name = "bsky-bot"
+name = "lommedalen-nordlys-bluesky"
 version = "1.0.0"
-description = "A Bluesky bot implemented in Python to find yellow cars on traffic cameras."
+description = "A Bluesky bot that monitors Lommedalen area webcams for aurora borealis (northern lights)."
 authors = ["Turbolego <turbolego@gmail.com>"]
 license = "MIT"
 readme = "README.md"
-keywords = ["bsky", "bluesky", "atproto", "bot", "python"]
+keywords = ["bsky", "bluesky", "atproto", "bot", "python", "aurora", "northern-lights", "lommedalen"]
 
 [tool.poetry.dependencies]
 python = ">=3.11"

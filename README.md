@@ -1,11 +1,11 @@
 # Aurora Borealis Bot 🌌
 
-An automated bot that monitors webcams in the Oslo area for aurora borealis (northern lights) and posts them to Bluesky when detected. It now performs a darkness check (astronomical → nautical → civil twilight) before any forecast or image processing to avoid wasting resources in daylight.
+An automated bot that monitors webcams in the Lommedalen area for aurora borealis (northern lights) and posts them to Bluesky when detected. It performs a darkness check (astronomical → nautical → civil twilight) and a Kp index threshold check before any image processing to avoid wasting resources.
 
 ## How It Works
 
 1. **Darkness Gate** – Fetches sunrise/sunset & twilight boundaries; exits early if it isn't dark enough.
-2. **(Optional) NOAA Forecast Gate** – Can be re-enabled to further skip when probability is zero.
+2. **Kp Index Gate** – Checks current planetary Kp index from NOAA; exits if below threshold (default: 4).
 3. **Image Download** – Pulls current frames from configured public webcams.
 4. **Color Pre-filter** – Fast heuristic for aurora-like greens/purples to reduce AI calls.
 5. **AI Confirmation** – GPT‑4o Vision answers yes/no for aurora presence; handles resize & rate limits.
@@ -25,7 +25,7 @@ Defined per view in `webcam_locations.json`:
 ## Features
 
 - **Darkness Gate**: Skips processing entirely when twilight data indicates it's still light.
-- **Optional NOAA Forecast Integration**: Can be toggled back in if desired.
+- **Kp Index Gate**: Requires minimum planetary Kp index (default: 4) from NOAA to proceed.
 - **Location Tracking**: Each post includes the view where aurora was detected.
 - **Fair Processing**: Shuffles webcam order to vary observation times.
 - **Color Pre-filtering**: Quick scan for aurora-like colors before AI check.
@@ -82,6 +82,7 @@ Edit these variables in `src/main.py`:
 ```python
 MAX_RUNTIME_MINUTES = 20    # Max runtime per session
 IMAGES_PER_SESSION = 30     # Images to process per session
+MIN_KP_INDEX = 4            # Minimum Kp index required (0-9 scale)
 ## Schedule
 
 GitHub Actions currently runs every 30 minutes during typical dark hours. Because the code now performs a dynamic darkness check, you can optionally widen the cron schedule (e.g. run 24/7) and rely on fast early exits.
@@ -89,11 +90,12 @@ GitHub Actions currently runs every 30 minutes during typical dark hours. Becaus
 
 ## Pipeline Overview
 
-1. Darkness check (sunrise-sunset API)
-2. (Optional) NOAA forecast gate
-3. Download image & color heuristic
-4. AI verification (yes/no) with resizing & retry
-5. Post confirmed aurora
+1. Darkness check (sunrise-sunset API for twilight boundaries)
+2. Kp index check (NOAA real-time solar wind data; minimum 4.0)
+3. Download webcam images
+4. Color heuristic pre-filter (green/purple detection)
+5. AI verification (GPT-4o Vision yes/no) with automatic resize & retry
+6. Post confirmed aurora to Bluesky with location
 
 ## Aurora Detection Details
 
@@ -107,6 +109,8 @@ The bot looks for:
 ### Common Issues
 
 **"Not dark enough"** – Expected during daylight/twilight; bot exits quickly.
+**"Kp below threshold"** – Planetary Kp index is too low for aurora activity; bot exits to save resources.
+**"Kp index unavailable"** – NOAA API temporarily down; bot proceeds anyway (fail-open).
 **"AI response: no"** – Color heuristic can flag vegetation or lights; AI filter reduces false positives.
 **"Rate limit (429)"** – Azure quota exceeded; bot skips more AI calls until next run.
 **"413 payload too large"** – Image auto-compressed & retried.
@@ -154,10 +158,11 @@ Trigger a manual run:
 ## Contributing
 
 Feel free to:
-- Add/remove webcam views
-- Tune color thresholds (`check_for_aurora_colors`)
-- Re-enable NOAA forecast gate
-- Add posting cooldowns or batching
+- Add/remove webcam views in `webcam_locations.json`
+- Tune color thresholds in `check_for_aurora_colors()` function
+- Adjust MIN_KP threshold (set via env var or default in code)
+- Add posting cooldowns or rate limiting
+- Tune darkness sensitivity (astronomical vs nautical twilight)
 
 ## Resources
 
