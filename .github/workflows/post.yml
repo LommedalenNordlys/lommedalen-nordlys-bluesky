@@ -34,12 +34,13 @@ jobs:
           pip install -r requirements.txt
 
       - name: Restore shuffle state
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: shuffle_state.json
           key: shuffle-state-v2-${{ github.run_number }}
           restore-keys: |
             shuffle-state-v2-
+        continue-on-error: true
 
       - name: Run Aurora Detection
         run: python src/main.py
@@ -52,8 +53,8 @@ jobs:
           MIN_KP: 4
 
       - name: Save shuffle state
-        uses: actions/cache@v4
-        if: always()  # Save state even if workflow fails
+        uses: actions/cache/save@v4
+        if: always() && hashFiles('shuffle_state.json') != ''
         with:
           path: shuffle_state.json
           key: shuffle-state-v2-${{ github.run_number }}

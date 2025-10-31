@@ -2,6 +2,3 @@ requests
 python-dotenv
 atproto
 Pillow
-torch
-transformers
-scipy
