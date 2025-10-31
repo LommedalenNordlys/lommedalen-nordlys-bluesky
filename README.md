@@ -1,4 +1,4 @@
-# Aurora Borealis Bot 🌌
+# Lommedalen Aurora Borealis Bot 🌌
 
 An automated bot that monitors webcams in the Lommedalen area for aurora borealis (northern lights) and posts them to Bluesky when detected. It performs a darkness check (astronomical → nautical → civil twilight) and a Kp index threshold check before any image processing to avoid wasting resources.
 
