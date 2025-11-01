@@ -50,7 +50,6 @@ azure_rate_limited = False
 
 # NOAA Kp index endpoints (primary nowcast + fallback estimated planetary Kp)
 NOAA_KP_PRIMARY = "https://services.swpc.noaa.gov/json/rtsw/rtsw_kp_forecast.json"
-NOAA_KP_FALLBACK = "https://services.swpc.noaa.gov/products/noaa-scales.json"json"
 NOAA_KP_FALLBACK = "https://services.swpc.noaa.gov/products/noaa-scales.json"
 
 def fetch_current_kp() -> Optional[float]:
@@ -102,47 +101,41 @@ def fetch_current_kp() -> Optional[float]:
     logging.warning("Could not fetch current Kp index")
     return None
 
-def fetch_sun_times(lat: float = SUN_TIMES_LAT, lng: float = SUN_TIMES_LNG) -> Optional[Dict[str, Any]]:
-    """Fetch sunrise/sunset & twilight times (UTC) from sunrise-sunset.org.
+def load_cached_sun_times(file: Path = SUN_SCHEDULE_FILE) -> Optional[Dict[str, Any]]:
+    """Load cached sun & twilight times from sun_schedule.json written by the update workflow.
 
-    Returns dict with parsed datetime objects for relevant twilight boundaries or None on error.
-    API returns times in UTC by default. We interpret them as today's date in UTC.
+    Returns a dict with datetime objects for keys needed by darkness logic, or None if unavailable.
+    File format example (truncated):
+    {
+      "updated_at": "2025-11-01T10:33:46.622676Z",
+      "sun_times": {
+         "astronomical_twilight_begin": "2025-11-01T04:18:25+00:00",
+         ...
+      }
+    }
     """
+    if not file.exists():
+        logging.debug(f"Sun schedule file missing: {file}")
+        return None
     try:
-        params = {"lat": lat, "lng": lng, "formatted": 0}  # formatted=0 gives ISO8601
-        r = requests.get(SUN_TIMES_ENDPOINT, params=params, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        if data.get("status") != "OK":
-            logging.warning(f"Sun times API status not OK: {data.get('status')}")
+        with open(file, "r") as f:
+            data = json.load(f)
+        sun_times = data.get("sun_times") or {}
+        if not isinstance(sun_times, dict):
             return None
-        results = data.get("results", {})
-        # Extract fields we care about
-        keys = [
-            "sunrise", "sunset", "civil_twilight_begin", "civil_twilight_end",
-            "nautical_twilight_begin", "nautical_twilight_end",
-            "astronomical_twilight_begin", "astronomical_twilight_end"
-        ]
-        parsed = {}
-        for k in keys:
-            val = results.get(k)
-            if not val:
+        parsed: Dict[str, Any] = {}
+        for k, v in sun_times.items():
+            if not isinstance(v, str):
                 continue
             try:
-                # ISO8601 already includes date, ensure tz-aware UTC
-                dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
-                parsed[k] = dt
+                # Accept API ISO strings with or without trailing Z
+                iso = v.replace("Z", "+00:00")
+                parsed[k] = datetime.fromisoformat(iso)
             except Exception:
-                # Fallback: attempt manual parsing of 'H:M:S AM/PM'
-                try:
-                    dt_today = datetime.utcnow().date()
-                    dt_obj = datetime.strptime(val, "%I:%M:%S %p")
-                    parsed[k] = datetime.combine(dt_today, dt_obj.time(), tzinfo=timezone.utc)
-                except Exception:
-                    logging.debug(f"Could not parse time field {k}: {val}")
-        return parsed
+                logging.debug(f"Could not parse cached sun time {k}: {v}")
+        return parsed if parsed else None
     except Exception as e:
-        logging.error(f"Failed to fetch sun times: {e}")
+        logging.warning(f"Failed to load cached sun times: {e}")
         return None
 
 def is_dark(parsed_times: Dict[str, Any]) -> bool:
