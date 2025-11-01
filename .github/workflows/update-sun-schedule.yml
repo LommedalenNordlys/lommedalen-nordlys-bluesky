@@ -128,9 +128,11 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "chore: update sun schedule and workflow timing [automated]
-
-Dark hours: $(jq -r '.dark_hours.start_hour' sun_schedule.json):00 - $(jq -r '.dark_hours.end_hour' sun_schedule.json):00 UTC
-Updated: $(jq -r '.updated_at' sun_schedule.json)"
+            START_HOUR=$(jq -r '.dark_hours.start_hour' sun_schedule.json)
+            END_HOUR=$(jq -r '.dark_hours.end_hour' sun_schedule.json)
+            UPDATED_AT=$(jq -r '.updated_at' sun_schedule.json)
+            git commit -m "chore: update sun schedule and workflow timing [automated]" \
+              -m "Dark hours: ${START_HOUR}:00 - ${END_HOUR}:00 UTC" \
+              -m "Updated: ${UPDATED_AT}"
             git push
           fi
