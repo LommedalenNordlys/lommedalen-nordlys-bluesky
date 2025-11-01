@@ -35,12 +35,6 @@
             "urls": [
                 "https://www.yr.no/webcams/1/2000/sylling/1.jpg"
             ]
-        },
-        {
-            "place": "Sylling South",
-            "urls": [
-                "https://www.yr.no/webcams/1/2000/sylling/2.jpg"
-            ]
         }
     ]
 }
