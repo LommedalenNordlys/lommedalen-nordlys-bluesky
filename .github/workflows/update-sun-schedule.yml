@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests PyYAML
+          pip install requests
 
       - name: Fetch sun times and update schedule
         run: |
@@ -96,64 +96,23 @@ jobs:
               json.dump(schedule_info, f, indent=2)
           
           print(f"✅ Updated sun schedule")
+          print(f"✅ Updated sun schedule")
           print(f"   Astronomical darkness: {start_hour}:00 - {end_hour}:00 UTC")
           print(f"   Cron schedules: {', '.join(cron_schedule)}")
-          EOF
-
-      - name: Update workflow schedule
-        run: |
-          python3 << 'EOF'
-          import json
-          import yaml
-          import re
-          
-          # Load schedule info
-          with open('sun_schedule.json', 'r') as f:
-              schedule_info = json.load(f)
-          
-          cron_schedules = schedule_info['cron_schedules']
-          
-          # Read the workflow file as text and update the cron schedules
-          with open('.github/workflows/post.yml', 'r') as f:
-              content = f.read()
-          
-          # Find and replace the schedule section
-          # Match the schedule section under 'on:'
-          schedule_pattern = r'(on:\s+schedule:\s*\n(?:\s+#[^\n]*\n)*)((?:\s+-\s+cron:\s+[^\n]+\n)+)'
-          
-          # Build new schedule lines
-          new_schedule_lines = []
-          for cron in cron_schedules:
-              new_schedule_lines.append(f'    - cron: "{cron}"\n')
-          
-          new_schedule_section = ''.join(new_schedule_lines)
-          
-          # Replace the schedule section
-          def replacer(match):
-              return match.group(1) + new_schedule_section
-          
-          updated_content = re.sub(schedule_pattern, replacer, content)
-          
-          # Write back
-          with open('.github/workflows/post.yml', 'w') as f:
-              f.write(updated_content)
-          
-          print(f"✅ Updated post.yml with {len(cron_schedules)} cron schedule(s)")
-          print(f"   Schedules: {', '.join(cron_schedules)}")
           EOF
 
       - name: Commit and push changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add sun_schedule.json .github/workflows/post.yml
+          git add sun_schedule.json
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             START_HOUR=$(jq -r '.dark_hours.start_hour' sun_schedule.json)
             END_HOUR=$(jq -r '.dark_hours.end_hour' sun_schedule.json)
             UPDATED_AT=$(jq -r '.updated_at' sun_schedule.json)
-            git commit -m "chore: update sun schedule and workflow timing [automated]" \
+            git commit -m "chore: update sun schedule [automated]" \
               -m "Dark hours: ${START_HOUR}:00 - ${END_HOUR}:00 UTC" \
               -m "Updated: ${UPDATED_AT}"
             git push
