@@ -96,27 +96,23 @@ jobs:
               json.dump(schedule_info, f, indent=2)
           
           print(f"✅ Updated sun schedule")
-          print(f"✅ Updated sun schedule")
           print(f"   Astronomical darkness: {start_hour}:00 - {end_hour}:00 UTC")
           print(f"   Cron schedules: {', '.join(cron_schedule)}")
           EOF
 
-      - name: Commit and push changes
+      - name: Update workflow schedule
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add sun_schedule.json .github/workflows/post.yml
-          if git diff --staged --quiet; then
+          python3 << 'EOF'
+          import json
+          import re
           
           # Load schedule info
-            START_HOUR=$(jq -r '.dark_hours.start_hour' sun_schedule.json)
-            END_HOUR=$(jq -r '.dark_hours.end_hour' sun_schedule.json)
-            UPDATED_AT=$(jq -r '.updated_at' sun_schedule.json)
-            CRON_SCHEDULES=$(jq -r '.cron_schedules | join(", ")' sun_schedule.json)
-            git commit -m "chore: update sun schedule and workflow timing [automated]" \
-              -m "Dark hours: ${START_HOUR}:00 - ${END_HOUR}:00 UTC" \
-              -m "Cron: ${CRON_SCHEDULES}" \
-              -m "Updated: ${UPDATED_AT}"
+          with open('sun_schedule.json', 'r') as f:
+              schedule_info = json.load(f)
+          
+          cron_schedules = schedule_info['cron_schedules']
+          
+          # Read the workflow file
           with open('.github/workflows/post.yml', 'r') as f:
               content = f.read()
           
@@ -149,15 +145,17 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add sun_schedule.json
+          git add sun_schedule.json .github/workflows/post.yml
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             START_HOUR=$(jq -r '.dark_hours.start_hour' sun_schedule.json)
             END_HOUR=$(jq -r '.dark_hours.end_hour' sun_schedule.json)
             UPDATED_AT=$(jq -r '.updated_at' sun_schedule.json)
-            git commit -m "chore: update sun schedule [automated]" \
+            CRON_SCHEDULES=$(jq -r '.cron_schedules | join(", ")' sun_schedule.json)
+            git commit -m "chore: update sun schedule and workflow timing [automated]" \
               -m "Dark hours: ${START_HOUR}:00 - ${END_HOUR}:00 UTC" \
+              -m "Cron: ${CRON_SCHEDULES}" \
               -m "Updated: ${UPDATED_AT}"
             git push
           fi
