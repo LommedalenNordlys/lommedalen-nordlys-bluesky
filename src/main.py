@@ -36,6 +36,7 @@ MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o"
 TODAY_FOLDER = Path("today")
 TODAY_FOLDER.mkdir(exist_ok=True)
 WEBCAM_LOCATIONS_FILE = Path("webcam_locations.json")
+SUN_SCHEDULE_FILE = Path("sun_schedule.json")
 SHUFFLE_STATE_FILE = Path("shuffle_state.json")
 BSKY_HANDLE = os.getenv("BSKY_HANDLE")
 BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
@@ -45,16 +46,11 @@ IMAGES_PER_SESSION = int(os.getenv("IMAGES_PER_SESSION", "30"))
 MIN_KP_INDEX = float(os.getenv("MIN_KP", "4"))  # Minimum planetary Kp index required to proceed
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 azure_rate_limited = False
-
-# Constants for sunrise-sunset API
-SUN_TIMES_LAT = 59.95
-SUN_TIMES_LNG = 10.466667
-SUN_TIMES_ENDPOINT = "https://api.sunrise-sunset.org/json"
 
 # NOAA Kp index endpoints (primary nowcast + fallback estimated planetary Kp)
 NOAA_KP_PRIMARY = "https://services.swpc.noaa.gov/json/rtsw/rtsw_kp_forecast.json"
+NOAA_KP_FALLBACK = "https://services.swpc.noaa.gov/products/noaa-scales.json"json"
 NOAA_KP_FALLBACK = "https://services.swpc.noaa.gov/products/noaa-scales.json"
 
 def fetch_current_kp() -> Optional[float]:
@@ -515,8 +511,8 @@ def main():
 
     logging.info(f"Starting Aurora Borealis Detection Bot - will run for max {MAX_RUNTIME_MINUTES} minutes")
 
-    # Darkness check first
-    sun_times = fetch_sun_times()
+    # Darkness check using cached schedule (fast, no API call)
+    sun_times = load_cached_sun_times()
     if sun_times:
         light_desc = describe_light_condition(sun_times)
         dark = is_dark(sun_times)

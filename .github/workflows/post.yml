@@ -2,8 +2,10 @@ name: "Lommedalen Aurora Borealis Bot"
 
 on:
   schedule:
-    # Run every 30 minutes (all hours); darkness gate inside code exits fast if daylight.
-    - cron: "*/30 * * * *"
+    # Schedule updated daily by update-sun-schedule workflow based on astronomical darkness
+    # Default fallback: evening/morning hours
+    - cron: "*/30 18-23 * * *"
+    - cron: "*/30 0-5 * * *"
   workflow_dispatch:  # Manual trigger for testing
 
 jobs:
@@ -42,7 +44,13 @@ jobs:
             shuffle-state-v2-
         continue-on-error: true
 
+      - name: Quick darkness check
+        id: darkness
+        run: python src/check_darkness.py
+        continue-on-error: true
+
       - name: Run Aurora Detection
+        if: steps.darkness.outcome == 'success'
         run: python src/main.py
         env:
           BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
