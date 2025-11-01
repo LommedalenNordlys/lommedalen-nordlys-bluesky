@@ -105,24 +105,41 @@ jobs:
           python3 << 'EOF'
           import json
           import yaml
+          import re
           
           # Load schedule info
           with open('sun_schedule.json', 'r') as f:
               schedule_info = json.load(f)
           
-          # Load current workflow
-          with open('.github/workflows/post.yml', 'r') as f:
-              workflow = yaml.safe_load(f)
-          
-          # Update cron schedules
           cron_schedules = schedule_info['cron_schedules']
-          workflow['on']['schedule'] = [{'cron': cron} for cron in cron_schedules]
           
-          # Save updated workflow
+          # Read the workflow file as text and update the cron schedules
+          with open('.github/workflows/post.yml', 'r') as f:
+              content = f.read()
+          
+          # Find and replace the schedule section
+          # Match the schedule section under 'on:'
+          schedule_pattern = r'(on:\s+schedule:\s*\n(?:\s+#[^\n]*\n)*)((?:\s+-\s+cron:\s+[^\n]+\n)+)'
+          
+          # Build new schedule lines
+          new_schedule_lines = []
+          for cron in cron_schedules:
+              new_schedule_lines.append(f'    - cron: "{cron}"\n')
+          
+          new_schedule_section = ''.join(new_schedule_lines)
+          
+          # Replace the schedule section
+          def replacer(match):
+              return match.group(1) + new_schedule_section
+          
+          updated_content = re.sub(schedule_pattern, replacer, content)
+          
+          # Write back
           with open('.github/workflows/post.yml', 'w') as f:
-              yaml.dump(workflow, f, default_flow_style=False, sort_keys=False)
+              f.write(updated_content)
           
           print(f"✅ Updated post.yml with {len(cron_schedules)} cron schedule(s)")
+          print(f"   Schedules: {', '.join(cron_schedules)}")
           EOF
 
       - name: Commit and push changes
