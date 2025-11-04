@@ -48,58 +48,64 @@ MIN_KP_INDEX = float(os.getenv("MIN_KP", "4"))  # Minimum planetary Kp index req
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 azure_rate_limited = False
 
-# NOAA Kp index endpoints (primary nowcast + fallback estimated planetary Kp)
-NOAA_KP_PRIMARY = "https://services.swpc.noaa.gov/json/rtsw/rtsw_kp_forecast.json"
-NOAA_KP_FALLBACK = "https://services.swpc.noaa.gov/products/noaa-scales.json"
+# Aurora / Kp data source (Ovation model latest snapshot)
+OVATION_URL = "https://services.swpc.noaa.gov/json/ovation_aurora_latest.json"
 
-def fetch_current_kp() -> Optional[float]:
-    """Fetch current or near-term Kp index.
+def fetch_current_kp(lat: float = 59.0, lon: float = 10.0) -> Optional[float]:
+    """Fetch a local Kp-like value for given coordinates (default Lommedalen area ~59N,10E) using Ovation model.
 
-    Strategy:
-    1. Try real-time solar wind Kp forecast JSON (contains an array with predicted values).
-    2. Fallback to NOAA scales JSON (search for geomagnetic storm scale and extract current or latest Kp-like value).
-    Returns a float Kp value or None if unavailable.
+    The endpoint returns a JSON object containing a list of coordinate triples: [latitude, longitude, value].
+    Example target triple: [59, 10, 0] -> we interpret the third number as localized activity (proxy for Kp / auroral intensity).
+
+    Return:
+        float value (third element) if exact or nearest coordinate found, else None.
+    Notes:
+        - This is a localized intensity proxy, not necessarily the global planetary Kp.
+        - We perform nearest-neighbor match (within 1 degree) if exact integer lat/lon not present.
     """
-    # Primary
     try:
-        r = requests.get(NOAA_KP_PRIMARY, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            # Expect a list of dicts; choose the latest entry with 'kp_index'
-            if isinstance(data, list) and data:
-                # Filter valid entries
-                candidates = [d for d in data if isinstance(d, dict) and ('kp_index' in d or 'kp_estimated' in d)]
-                if candidates:
-                    latest = candidates[-1]
-                    kp_val = latest.get('kp_index') or latest.get('kp_estimated')
-                    try:
-                        return float(kp_val)
-                    except Exception:
-                        pass
+        resp = requests.get(OVATION_URL, timeout=12)
+        resp.raise_for_status()
+        data = resp.json()
     except Exception as e:
-        logging.debug(f"Primary Kp fetch failed: {e}")
+        logging.warning(f"Ovation request failed: {e}")
+        return None
 
-    # Fallback
-    try:
-        r2 = requests.get(NOAA_KP_FALLBACK, timeout=10)
-        if r2.status_code == 200:
-            data2 = r2.json()
-            # Look for an entry referencing geomagnetic storm scale with a 'kp' or 'G' mapping
-            if isinstance(data2, list):
-                for entry in data2:
-                    if isinstance(entry, dict):
-                        # Some structures store scales; attempt to parse a numeric kp
-                        for key, val in entry.items():
-                            if 'kp' in key.lower():
-                                try:
-                                    return float(val)
-                                except Exception:
-                                    continue
-    except Exception as e:
-        logging.debug(f"Fallback Kp fetch failed: {e}")
+    coords = data.get("coordinates") or data.get("data") or []
+    if not isinstance(coords, list) or not coords:
+        logging.debug("Ovation payload missing 'coordinates' list")
+        return None
 
-    logging.warning("Could not fetch current Kp index")
-    return None
+    target_lat = int(round(lat))
+    target_lon = int(round(lon))
+
+    exact_match_val: Optional[float] = None
+    nearest_val: Optional[float] = None
+    nearest_dist: float = 9999.0
+
+    for triple in coords:
+        if not (isinstance(triple, list) and len(triple) >= 3):
+            continue
+        c_lat, c_lon, c_val = triple[0], triple[1], triple[2]
+        # Basic validation of numeric types
+        if not (isinstance(c_lat, (int, float)) and isinstance(c_lon, (int, float)) and isinstance(c_val, (int, float))):
+            continue
+        if int(c_lat) == target_lat and int(c_lon) == target_lon:
+            exact_match_val = float(c_val)
+            break
+        # Track nearest within reasonable range (<=1 degree separation)
+        dist = abs(c_lat - lat) + abs(c_lon - lon)
+        if dist < nearest_dist and dist <= 1.0:
+            nearest_dist = dist
+            nearest_val = float(c_val)
+
+    kp_local = exact_match_val if exact_match_val is not None else nearest_val
+    if kp_local is None:
+        logging.debug("No suitable Ovation coordinate match for specified location")
+        return None
+
+    logging.info(f"Local Ovation intensity (proxy Kp) at ~({target_lat},{target_lon}) = {kp_local:.2f}")
+    return kp_local
 
 def load_cached_sun_times(file: Path = SUN_SCHEDULE_FILE) -> Optional[Dict[str, Any]]:
     """Load cached sun & twilight times from sun_schedule.json written by the update workflow.
