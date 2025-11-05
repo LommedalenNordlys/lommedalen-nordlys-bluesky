@@ -1,20 +1,20 @@
 {
-  "updated_at": "2025-11-04T03:49:27.917949Z",
+  "updated_at": "2025-11-05T03:51:45.830471Z",
   "location": {
     "lat": 59.95,
     "lng": 10.466667
   },
   "sun_times": {
-    "sunrise": "2025-11-04T06:46:12+00:00",
-    "sunset": "2025-11-04T15:17:12+00:00",
-    "solar_noon": "2025-11-04T11:01:42+00:00",
-    "day_length": 30660,
-    "civil_twilight_begin": "2025-11-04T06:02:49+00:00",
-    "civil_twilight_end": "2025-11-04T16:00:34+00:00",
-    "nautical_twilight_begin": "2025-11-04T05:13:00+00:00",
-    "nautical_twilight_end": "2025-11-04T16:50:24+00:00",
-    "astronomical_twilight_begin": "2025-11-04T04:24:48+00:00",
-    "astronomical_twilight_end": "2025-11-04T17:38:35+00:00"
+    "sunrise": "2025-11-05T06:48:44+00:00",
+    "sunset": "2025-11-05T15:14:42+00:00",
+    "solar_noon": "2025-11-05T11:01:43+00:00",
+    "day_length": 30358,
+    "civil_twilight_begin": "2025-11-05T06:05:07+00:00",
+    "civil_twilight_end": "2025-11-05T15:58:19+00:00",
+    "nautical_twilight_begin": "2025-11-05T05:15:08+00:00",
+    "nautical_twilight_end": "2025-11-05T16:48:18+00:00",
+    "astronomical_twilight_begin": "2025-11-05T04:26:54+00:00",
+    "astronomical_twilight_end": "2025-11-05T17:36:32+00:00"
   },
   "dark_hours": {
     "start_hour": 18,
