@@ -4,8 +4,8 @@ on:
   schedule:
     # Schedule updated daily by update-sun-schedule workflow based on astronomical darkness
     # Default fallback: evening/morning hours
-    - cron: "*/30 18-23 * * *"
-    - cron: "*/30 0-4 * * *"
+    - cron: "*/15 18-23 * * *"
+    - cron: "*/15 0-4 * * *"
   workflow_dispatch:  # Manual trigger for testing
 
 jobs:
