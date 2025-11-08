@@ -11,6 +11,27 @@ OVATION_URL="https://services.swpc.noaa.gov/json/ovation_aurora_latest.json"
 TARGET_LAT=${1:-59}
 TARGET_LON=${2:-10}
 MIN_KP=${3:-4}
+KP_DATA_DIR="kp_data"
+
+# Function to save KP data with timestamp
+save_kp_data() {
+    local kp_value=$1
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local year=$(date -u +"%Y")
+    local month=$(date -u +"%m")
+    
+    # Create directory structure: kp_data/YYYY/MM/
+    local dir_path="${KP_DATA_DIR}/${year}/${month}"
+    mkdir -p "$dir_path"
+    
+    # Filename format: YYYY_MM.jsonl (JSON Lines format for easy appending)
+    local file_path="${dir_path}/${year}_${month}.jsonl"
+    
+    # Append entry as JSON line
+    echo "{\"timestamp\":\"${timestamp}\",\"kp_value\":${kp_value},\"lat\":${TARGET_LAT},\"lon\":${TARGET_LON}}" >> "$file_path"
+    
+    echo "💾 Saved KP data: $file_path"
+}
 
 # Check if jq and curl are available
 if ! command -v jq &> /dev/null; then
@@ -66,6 +87,9 @@ if [[ "$KP_VALUE" == "null" ]] || [[ -z "$KP_VALUE" ]]; then
     echo "⚠️  No aurora data found for location ($TARGET_LAT, $TARGET_LON); assuming conditions are suitable (fail-open)" >&2
     exit 0
 fi
+
+# Save KP data to file
+save_kp_data "$KP_VALUE"
 
 # Compare with threshold
 echo "📊 Local aurora intensity (Kp proxy): $KP_VALUE"
