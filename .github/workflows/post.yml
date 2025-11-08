@@ -46,8 +46,9 @@ jobs:
 
       - name: Quick darkness check
         id: darkness
-        run: python src/check_darkness.py
+        run: bash src/check_darkness.sh
         continue-on-error: true
+        # Uses bash + jq for faster execution vs Python (~10x faster on Linux)
 
       - name: Run Aurora Detection
         if: steps.darkness.outcome == 'success'
