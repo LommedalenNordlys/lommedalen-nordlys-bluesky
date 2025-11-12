@@ -854,3 +854,58 @@
     }
   ]
 }
+{
+  "timestamp": "2025-11-12T23:52:42Z",
+  "target_lat": 59.959103,
+  "target_lon": 10.4592208,
+  "kp_threshold": 1,
+  "kp_max": 0,
+  "kp_avg": 0,
+  "samples": [
+    {
+      "lat": 59,
+      "lon": 9,
+      "value": 0
+    },
+    {
+      "lat": 59,
+      "lon": 10,
+      "value": 0
+    },
+    {
+      "lat": 59,
+      "lon": 11,
+      "value": 0
+    },
+    {
+      "lat": 60,
+      "lon": 9,
+      "value": 0
+    },
+    {
+      "lat": 60,
+      "lon": 10,
+      "value": 0
+    },
+    {
+      "lat": 60,
+      "lon": 11,
+      "value": 0
+    },
+    {
+      "lat": 61,
+      "lon": 9,
+      "value": 0
+    },
+    {
+      "lat": 61,
+      "lon": 10,
+      "value": 0
+    },
+    {
+      "lat": 61,
+      "lon": 11,
+      "value": 0
+    }
+  ]
+}
