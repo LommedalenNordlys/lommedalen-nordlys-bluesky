@@ -27,7 +27,7 @@ jobs:
       - name: Check KP index for aurora activity
         id: kp_check
         if: steps.darkness.outcome == 'success'
-        run: bash src/check_kp.sh 59 10 4
+        run: bash src/check_kp.sh 59 10 1
         continue-on-error: true
         # Check if aurora activity (Kp index) is sufficient at Lommedalen coordinates
         # Exits early if Kp < 4, saving processing time
@@ -88,7 +88,7 @@ jobs:
           KEY_GITHUB_TOKEN: ${{ secrets.KEY_GITHUB_TOKEN }}
           SUN_LAT: 59.95
           SUN_LNG: 10.466667
-          MIN_KP: 4
+          MIN_KP: 1
 
       - name: Save shuffle state
         uses: actions/cache/save@v4

@@ -43,7 +43,7 @@ BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
 
 MAX_RUNTIME_MINUTES = int(os.getenv("MAX_RUNTIME_MINUTES", "20"))
 IMAGES_PER_SESSION = int(os.getenv("IMAGES_PER_SESSION", "30"))
-MIN_KP_INDEX = float(os.getenv("MIN_KP", "4"))  # Minimum planetary Kp index required to proceed
+MIN_KP_INDEX = float(os.getenv("MIN_KP", "1"))  # Minimum planetary Kp index required to proceed (lowered to 1 for broader capture)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 azure_rate_limited = False
