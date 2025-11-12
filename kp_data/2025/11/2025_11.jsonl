@@ -69,3 +69,18 @@
 {"timestamp":"2025-11-12T03:36:50Z","kp_value":0,"lat":59,"lon":10}
 {"timestamp":"2025-11-12T04:41:37Z","kp_value":0,"lat":59,"lon":10}
 {"timestamp":"2025-11-12T04:56:01Z","kp_value":0,"lat":59,"lon":10}
+{
+  "timestamp": "2025-11-12T16:30:50Z",
+  "target_lat": 59.959103,
+  "target_lon": 10.4592208,
+  "kp_threshold": 1,
+  "kp_max": 0,
+  "kp_avg": 0,
+  "samples": [
+    {
+      "lat": 60,
+      "lon": 10,
+      "value": 0
+    }
+  ]
+}
