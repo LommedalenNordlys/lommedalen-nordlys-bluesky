@@ -10,7 +10,7 @@ OVATION_URL="https://services.swpc.noaa.gov/json/ovation_aurora_latest.json"
 TARGET_LAT=${1:-59.959103}
 TARGET_LON=${2:-10.4592208}
 MIN_KP=${3:-1}
-RADIUS=${4:-0.5}   # degrees (lat/lon box half-width)
+RADIUS=${4:-1.5}   # degrees (lat/lon box half-width)
 KP_DATA_DIR="kp_data"
 
 if ! command -v jq &>/dev/null; then

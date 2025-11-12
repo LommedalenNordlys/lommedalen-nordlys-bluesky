@@ -27,7 +27,7 @@ jobs:
       - name: Check KP index for aurora activity
         id: kp_check
         if: steps.darkness.outcome == 'success'
-        run: bash src/check_kp_area.sh 59.959103 10.4592208 1 0.5
+        run: bash src/check_kp_area.sh 59.959103 10.4592208 1 1.5
         continue-on-error: true
         # Check if aurora activity (Kp index) is sufficient at Lommedalen coordinates
         # Exits early if Kp < 4, saving processing time
