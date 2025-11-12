@@ -456,8 +456,14 @@ def ask_ai_if_aurora(image_path: Path, location: str) -> Optional[str]:
         return None
 
 
-def post_to_bluesky(image_path: Path, location: str) -> bool:
-    """Post aurora sighting to Bluesky with location. Requires atproto Client to be installed/usable."""
+def post_to_bluesky(image_path: Path, location: str, kp_value: Optional[float] = None) -> bool:
+    """Post aurora sighting to Bluesky with location and KP index.
+
+    Args:
+        image_path: Path to image to upload.
+        location: Human-readable location string.
+        kp_value: Optional Kp / local intensity value; if provided will be included in the post text.
+    """
     if Client is None or models is None:
         logging.error("Bluesky atproto client not available (install 'atproto' or adjust code).")
         return False
@@ -480,7 +486,8 @@ def post_to_bluesky(image_path: Path, location: str) -> bool:
         upload_result = client.upload_blob(image_bytes)
         blob_ref = getattr(upload_result, "blob", upload_result)
 
-        post_text = f"🌌 Nordlys / Aurora Borealis!\n📍 {location}"
+        kp_part = f"Kp index: {kp_value:.1f}" if kp_value is not None else "Kp index: n/a"
+        post_text = f"🌌 Nordlys / Aurora Borealis!\n📍 {location}\n{kp_part}"
 
         client.app.bsky.feed.post.create(
             repo=client.me.did,
@@ -577,7 +584,7 @@ def main():
                 ai_answer = ask_ai_if_aurora(image_path, location)
                 if ai_answer == "yes":
                     logging.info("  🌌 AI confirms aurora — posting to Bluesky...")
-                    if post_to_bluesky(image_path, location):
+                    if post_to_bluesky(image_path, location, kp_val):
                         session_posted += 1
                         logging.info("  ✅ Posted to Bluesky")
                 elif ai_answer == "no":
