@@ -23,7 +23,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Optional
 
@@ -58,7 +58,8 @@ def hour_darkness_gate(schedule_file: Path) -> bool:
         spans_midnight = dh.get("spans_midnight")
         if start is None or end is None:
             return True
-        hour = int(datetime.utcnow().strftime("%H"))
+        # Use timezone-aware UTC (Python 3.11+): datetime.now(UTC)
+        hour = int(datetime.now(UTC).strftime("%H"))
         if spans_midnight:
             return hour >= start or hour <= end
         else:
