@@ -3,3 +3,4 @@ python-dotenv
 atproto
 Pillow
 PyYAML
+pytest

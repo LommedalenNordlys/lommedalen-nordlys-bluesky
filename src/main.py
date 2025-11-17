@@ -456,6 +456,23 @@ def ask_ai_if_aurora(image_path: Path, location: str) -> Optional[str]:
         return None
 
 
+def build_post_text(location: str, kp_value: Optional[float], test: bool) -> str:
+    """Return formatted Bluesky post text with optional test disclaimer.
+
+    Args:
+        location: Location string.
+        kp_value: Optional Kp/local intensity value.
+        test: Whether this is a test post (adds disclaimer).
+    """
+    kp_part = f"Kp index: {kp_value:.1f}" if kp_value is not None else "Kp index: n/a"
+    base_text = f"🌌 Nordlys / Aurora Borealis!\n📍 {location}\n{kp_part}"
+    if test:
+        return (
+            "🧪 Test Aurora Detection (System Accuracy Check)\n"
+            f"{base_text}\n(This is a test post; validating multi-source KP + image analysis pipeline)"
+        )
+    return base_text
+
 def post_to_bluesky(image_path: Path, location: str, kp_value: Optional[float] = None, test: bool = False) -> bool:
     """Post aurora sighting to Bluesky with location and KP index.
 
@@ -486,13 +503,7 @@ def post_to_bluesky(image_path: Path, location: str, kp_value: Optional[float] =
         upload_result = client.upload_blob(image_bytes)
         blob_ref = getattr(upload_result, "blob", upload_result)
 
-        kp_part = f"Kp index: {kp_value:.1f}" if kp_value is not None else "Kp index: n/a"
-        base_text = f"🌌 Nordlys / Aurora Borealis!\n📍 {location}\n{kp_part}"
-        if test:
-            # Explicit test disclaimer for accuracy validation scenario (Nordkapp test runs)
-            post_text = f"🧪 Test Aurora Detection (System Accuracy Check)\n{base_text}\n(This is a test post; validating multi-source KP + image analysis pipeline)"
-        else:
-            post_text = base_text
+        post_text = build_post_text(location, kp_value, test)
 
         client.app.bsky.feed.post.create(
             repo=client.me.did,
