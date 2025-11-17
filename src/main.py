@@ -28,8 +28,29 @@ except Exception:
 load_dotenv()
 
 # Config (set these in your environment or .env file)
-# TOKEN should be your Azure (or inference) API key if used; rename as needed.
-TOKEN = os.getenv("KEY_GITHUB_TOKEN") or os.getenv("AZURE_API_KEY") or os.getenv("API_KEY")
+# NOTE: We used to capture TOKEN at import time, but tests set the env var after importing.
+# To support dynamic updates (e.g. setting KEY_GITHUB_TOKEN in test cases), we now resolve it
+# on demand via get_ai_token(). The legacy TOKEN variable remains for backward compatibility
+# but may be None and is no longer authoritative.
+TOKEN = os.getenv("KEY_GITHUB_TOKEN") or os.getenv("AZURE_API_KEY") or os.getenv("API_KEY")  # deprecated static snapshot
+
+def get_ai_token() -> Optional[str]:
+    """Return current AI auth token from environment.
+
+    Checks several possible variable names to allow flexibility in CI/local setups:
+    - KEY_GITHUB_TOKEN (used in tests)
+    - AZURE_API_KEY (potential Azure key name)
+    - API_KEY (generic fallback)
+
+    Returns:
+        The token string if found, else None.
+    """
+    return (
+        os.getenv("KEY_GITHUB_TOKEN")
+        or os.getenv("AZURE_API_KEY")
+        or os.getenv("API_KEY")
+        or TOKEN  # fallback to legacy snapshot if still populated
+    )
 ENDPOINT = os.getenv("AZURE_ENDPOINT") or "https://models.inference.ai.azure.com"
 MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o"
 
@@ -357,7 +378,8 @@ def ask_ai_if_aurora(image_path: Path, location: str) -> Optional[str]:
         logging.info("Azure previously rate-limited; skipping ask_ai_if_aurora")
         return None
 
-    if not TOKEN:
+    token = get_ai_token()
+    if not token:
         logging.error("No API token configured for AI calls")
         return None
 
@@ -368,7 +390,7 @@ def ask_ai_if_aurora(image_path: Path, location: str) -> Optional[str]:
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {TOKEN}"
+        "Authorization": f"Bearer {token}"
     }
 
     # Minimal prompt asking for yes/no answer
@@ -566,7 +588,7 @@ def main():
     logging.info(f"Resuming from position {current_index}/{len(webcams)}")
     logging.info(f"All-time stats: processed={stats.get('total_processed', 0)} posted={stats.get('total_posted', 0)}")
 
-    if not TOKEN:
+    if not get_ai_token():
         logging.error("No AI token configured — AI checks will fail")
     else:
         logging.info("AI token present — will attempt AI verification (subject to rate limits)")
