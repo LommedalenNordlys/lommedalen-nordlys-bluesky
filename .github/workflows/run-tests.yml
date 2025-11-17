@@ -26,7 +26,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run pytest
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
+          echo "Python path: $PYTHONPATH"
           pytest -q --disable-warnings --maxfail=1
 
       - name: Upload test artifacts (on failure)
