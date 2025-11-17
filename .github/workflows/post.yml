@@ -110,3 +110,62 @@ jobs:
           path: |
             *.log
           retention-days: 3
+  nordkapp-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: aurora-detector
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Darkness check (Nordkapp)
+        id: darkness_nordkapp
+        run: bash src/check_darkness_nordkapp.sh
+        continue-on-error: true
+
+      - name: KP / Aurora potential (Nordkapp)
+        id: kp_nordkapp
+        if: steps.darkness_nordkapp.outcome == 'success'
+        run: bash src/check_kp_multi_nordkapp.sh 1 1.5
+        continue-on-error: true
+
+      - name: Persist Nordkapp KP log data
+        if: steps.darkness_nordkapp.outcome == 'success'
+        run: |
+          if git diff --quiet --exit-code kp_data_nordkapp; then
+            echo "No new Nordkapp KP data"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add kp_data_nordkapp
+          COMMIT_MSG="chore: log Nordkapp KP reading $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git commit -m "$COMMIT_MSG" || echo "Nothing to commit"
+          git push || echo "Push failed"
+          echo "✅ Persisted Nordkapp KP data"
+
+      - name: Set up Python 3.11 (Nordkapp test)
+        if: steps.darkness_nordkapp.outcome == 'success' && steps.kp_nordkapp.outcome == 'success'
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies (Nordkapp test)
+        if: steps.darkness_nordkapp.outcome == 'success' && steps.kp_nordkapp.outcome == 'success'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Nordkapp Aurora Test
+        if: steps.darkness_nordkapp.outcome == 'success' && steps.kp_nordkapp.outcome == 'success'
+        run: python src/nordkapp_test.py
+        env:
+          BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
+          BSKY_PASSWORD: ${{ secrets.BSKY_PASSWORD }}
+          KEY_GITHUB_TOKEN: ${{ secrets.KEY_GITHUB_TOKEN }}
+          MIN_KP: 1
+
+      - name: Cleanup Nordkapp temp files
+        if: always()
+        run: |
+          rm -f today/nordkapp_*.jpg || true

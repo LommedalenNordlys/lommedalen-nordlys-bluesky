@@ -456,7 +456,7 @@ def ask_ai_if_aurora(image_path: Path, location: str) -> Optional[str]:
         return None
 
 
-def post_to_bluesky(image_path: Path, location: str, kp_value: Optional[float] = None) -> bool:
+def post_to_bluesky(image_path: Path, location: str, kp_value: Optional[float] = None, test: bool = False) -> bool:
     """Post aurora sighting to Bluesky with location and KP index.
 
     Args:
@@ -487,7 +487,12 @@ def post_to_bluesky(image_path: Path, location: str, kp_value: Optional[float] =
         blob_ref = getattr(upload_result, "blob", upload_result)
 
         kp_part = f"Kp index: {kp_value:.1f}" if kp_value is not None else "Kp index: n/a"
-        post_text = f"🌌 Nordlys / Aurora Borealis!\n📍 {location}\n{kp_part}"
+        base_text = f"🌌 Nordlys / Aurora Borealis!\n📍 {location}\n{kp_part}"
+        if test:
+            # Explicit test disclaimer for accuracy validation scenario (Nordkapp test runs)
+            post_text = f"🧪 Test Aurora Detection (System Accuracy Check)\n{base_text}\n(This is a test post; validating multi-source KP + image analysis pipeline)"
+        else:
+            post_text = base_text
 
         client.app.bsky.feed.post.create(
             repo=client.me.did,
