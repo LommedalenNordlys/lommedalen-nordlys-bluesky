@@ -570,9 +570,9 @@ def main():
     # Kp index gate
     kp_val = fetch_current_kp()
     if kp_val is not None:
-        logging.info(f"Current Kp index: {kp_val:.1f} (minimum required {MIN_KP_INDEX})")
-        if kp_val < MIN_KP_INDEX:
-            logging.info("🛑 Kp below threshold; exiting before webcam processing.")
+        logging.info(f"Current Kp index: {kp_val:.1f} (must be > {MIN_KP_INDEX:.1f})")
+        if kp_val <= MIN_KP_INDEX:
+            logging.info("🛑 Kp not strictly above threshold; exiting before webcam processing.")
             return
     else:
         logging.warning("Kp index unavailable; proceeding (fail-open).")

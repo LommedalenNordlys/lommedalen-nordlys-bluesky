@@ -3,8 +3,8 @@
 # Multi-source KP/aurora check using both NOAA Ovation and YR.no APIs.
 # Returns exit 0 if EITHER source indicates aurora activity, else 1.
 # 
-# NOAA: kp_max >= threshold
-# YR.no: any current/upcoming auroraValue > 0
+# NOAA: kp_max strictly > threshold
+# YR.no: any current/upcoming auroraValue strictly > threshold (was >0; tightened per new policy)
 #
 # Usage: check_kp_multi.sh <lat> <lon> <min_kp> [radius] [yr_location_id]
 
@@ -65,14 +65,14 @@ if [[ -n "$NOAA_RESP" ]]; then
   NOAA_KP_MAX=$(echo "$SAMPLES_JSON" | jq '[.[].value] | max // 0')
   NOAA_KP_AVG=$(echo "$SAMPLES_JSON" | jq -r 'if length>0 then ([.[].value]|add/length) else 0 end')
   
-  printf "  📊 NOAA: samples=%d kp_max=%.2f kp_avg=%.2f threshold=%.2f\n" "$SAMPLE_COUNT" "$NOAA_KP_MAX" "$NOAA_KP_AVG" "$MIN_KP"
+  printf "  📊 NOAA: samples=%d kp_max=%.2f kp_avg=%.2f threshold(>)=%.2f\n" "$SAMPLE_COUNT" "$NOAA_KP_MAX" "$NOAA_KP_AVG" "$MIN_KP"
   
-  NOAA_MEETS=$(echo "$NOAA_KP_MAX >= $MIN_KP" | bc -l || echo 0)
+  NOAA_MEETS=$(echo "$NOAA_KP_MAX > $MIN_KP" | bc -l || echo 0)
   if [[ "$NOAA_MEETS" == "1" ]]; then
     NOAA_TRIGGERED=true
-    echo "  ✅ NOAA indicates aurora potential (kp_max $NOAA_KP_MAX >= $MIN_KP)"
+    echo "  ✅ NOAA indicates aurora potential (kp_max $NOAA_KP_MAX > $MIN_KP)"
   else
-    echo "  ❌ NOAA below threshold (kp_max $NOAA_KP_MAX < $MIN_KP)"
+    echo "  ❌ NOAA below strict threshold (kp_max $NOAA_KP_MAX <= $MIN_KP)"
   fi
 else
   echo "  ⚠️ NOAA data unavailable"
@@ -107,14 +107,14 @@ if [[ -n "$YR_RESP" ]]; then
     YR_AURORA_MAX=$YR_UPCOMING_MAX
   fi
   
-  printf "  📊 YR.no: max auroraValue=%.2f (current/next 3hrs)\n" "$YR_AURORA_MAX"
+  printf "  📊 YR.no: max auroraValue=%.2f (current/next 3hrs) threshold(>)=%.2f\n" "$YR_AURORA_MAX" "$MIN_KP"
   
-  YR_MEETS=$(echo "$YR_AURORA_MAX > 0" | bc -l || echo 0)
+  YR_MEETS=$(echo "$YR_AURORA_MAX > $MIN_KP" | bc -l || echo 0)
   if [[ "$YR_MEETS" == "1" ]]; then
     YR_TRIGGERED=true
-    echo "  ✅ YR.no indicates aurora potential (auroraValue $YR_AURORA_MAX > 0)"
+    echo "  ✅ YR.no indicates aurora potential (auroraValue $YR_AURORA_MAX > $MIN_KP)"
   else
-    echo "  ❌ YR.no shows no activity (auroraValue $YR_AURORA_MAX = 0)"
+    echo "  ❌ YR.no below strict threshold (auroraValue $YR_AURORA_MAX <= $MIN_KP)"
   fi
 else
   echo "  ⚠️ YR.no data unavailable"

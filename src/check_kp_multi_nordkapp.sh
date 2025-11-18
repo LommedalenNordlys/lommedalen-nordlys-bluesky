@@ -28,8 +28,8 @@ if [[ -n "$RESP" ]]; then
   fi
   NOAA_KP_MAX=$(echo "$SAMPLES" | jq '[.[].value] | max // 0')
   NOAA_KP_AVG=$(echo "$SAMPLES" | jq 'if length>0 then ([.[].value]|add/length) else 0 end')
-  if (( $(echo "$NOAA_KP_MAX >= $MIN_KP" | bc -l) )); then NOAA_TRIGGERED=true; fi
-  echo "  NOAA kp_max=$NOAA_KP_MAX avg=$NOAA_KP_AVG samples=$COUNT"
+  if (( $(echo "$NOAA_KP_MAX > $MIN_KP" | bc -l) )); then NOAA_TRIGGERED=true; fi
+  echo "  NOAA kp_max=$NOAA_KP_MAX avg=$NOAA_KP_AVG samples=$COUNT threshold(>)=$MIN_KP"
 else
   echo "  NOAA unavailable"
 fi
@@ -40,8 +40,8 @@ if [[ -n "$YR_RESP" ]]; then
   CURR=$(echo "$YR_RESP" | jq -r --arg now "$NOW" '(.shortIntervals // []) | map(select(.start <= ($now+"+01:00") and .end > ($now+"+01:00"))) | map(.auroraValue // 0) | max // 0')
   UPC=$(echo "$YR_RESP" | jq -r '(.shortIntervals // []) | .[0:4] | map(.auroraValue // 0) | max // 0')
   YR_AURORA_MAX=$CURR; if (( $(echo "$UPC > $YR_AURORA_MAX" | bc -l) )); then YR_AURORA_MAX=$UPC; fi
-  if (( $(echo "$YR_AURORA_MAX > 0" | bc -l) )); then YR_TRIGGERED=true; fi
-  echo "  YR auroraValue_max=$YR_AURORA_MAX (current/next)"
+  if (( $(echo "$YR_AURORA_MAX > $MIN_KP" | bc -l) )); then YR_TRIGGERED=true; fi
+  echo "  YR auroraValue_max=$YR_AURORA_MAX (current/next) threshold(>)=$MIN_KP"
 else
   echo "  YR.no unavailable"
 fi
