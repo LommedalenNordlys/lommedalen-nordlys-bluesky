@@ -53,4 +53,18 @@ DIR="$KP_DATA_DIR/$YEAR/$MONTH"; mkdir -p "$DIR"; FILE="$DIR/${YEAR}_${MONTH}.js
 LINE=$(jq -n --arg ts "$TS" --argjson lat $TARGET_LAT --argjson lon $TARGET_LON --argjson noaa_max $NOAA_KP_MAX --argjson noaa_avg ${NOAA_KP_AVG:-0} --argjson yr_kp ${YR_KP_INDEX:-0} --argjson yr_aurora $YR_AURORA_MAX --arg noaa_trig "$NOAA_TRIGGERED" --arg yr_trig "$YR_TRIGGERED" '{timestamp:$ts, target_lat:$lat, target_lon:$lon, sources:{noaa:{kp_max:$noaa_max,kp_avg:$noaa_avg,triggered:($noaa_trig=="true")}, yr:{kp_index:$yr_kp,aurora_value:$yr_aurora,triggered:($yr_trig=="true")}}}' )
 echo "$LINE" >> "$FILE"
 echo "  Logged -> $FILE"
-if [[ "$NOAA_TRIGGERED" == "true" || "$YR_TRIGGERED" == "true" ]]; then echo "✅ Nordkapp aurora potential"; exit 0; else echo "🛑 Nordkapp no activity"; exit 1; fi
+if [[ "$NOAA_TRIGGERED" == "true" || "$YR_TRIGGERED" == "true" ]]; then 
+  # Export KP values for Python script
+  VALIDATED_KP=0
+  if [[ "$YR_TRIGGERED" == "true" ]] && [[ "$NOAA_TRIGGERED" == "true" ]]; then
+    VALIDATED_KP=$(echo "if ($YR_KP_INDEX > $NOAA_KP_MAX) $YR_KP_INDEX else $NOAA_KP_MAX" | bc -l)
+  elif [[ "$YR_TRIGGERED" == "true" ]]; then
+    VALIDATED_KP=$YR_KP_INDEX
+  elif [[ "$NOAA_TRIGGERED" == "true" ]]; then
+    VALIDATED_KP=$NOAA_KP_MAX
+  fi
+  echo "VALIDATED_KP=$VALIDATED_KP"
+  echo "✅ Nordkapp aurora potential"; exit 0; 
+else 
+  echo "🛑 Nordkapp no activity"; exit 1; 
+fi

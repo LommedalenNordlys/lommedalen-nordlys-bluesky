@@ -147,6 +147,20 @@ echo "💾 Saved multi-source log -> $FILE"
 echo ""
 if [[ "$NOAA_TRIGGERED" == "true" ]] || [[ "$YR_TRIGGERED" == "true" ]]; then
   echo "✅ Aurora conditions favorable (NOAA=${NOAA_TRIGGERED}, YR=${YR_TRIGGERED})"
+  
+  # Export KP values for Python script to use
+  # Use the max value from triggered sources
+  VALIDATED_KP=0
+  if [[ "$YR_TRIGGERED" == "true" ]] && [[ "$NOAA_TRIGGERED" == "true" ]]; then
+    # Both triggered: use max
+    VALIDATED_KP=$(echo "if ($YR_KP_INDEX > $NOAA_KP_MAX) $YR_KP_INDEX else $NOAA_KP_MAX" | bc -l)
+  elif [[ "$YR_TRIGGERED" == "true" ]]; then
+    VALIDATED_KP=$YR_KP_INDEX
+  elif [[ "$NOAA_TRIGGERED" == "true" ]]; then
+    VALIDATED_KP=$NOAA_KP_MAX
+  fi
+  
+  echo "VALIDATED_KP=$VALIDATED_KP"
   exit 0
 else
   echo "🛑 No aurora activity detected from either source"

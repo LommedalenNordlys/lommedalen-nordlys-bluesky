@@ -635,23 +635,33 @@ def main():
     else:
         logging.warning("Could not retrieve sun times; proceeding without darkness gate.")
 
-    # Note: KP index validation is handled by bash scripts (check_kp_multi.sh)
-    # before this Python script runs in the GitHub Actions workflow.
-    # Read the validated KP value from bash logs for display in post.
-    kp_val = get_validated_kp()
-    if kp_val is not None:
-        logging.info(f"Validated Kp index: {kp_val:.1f}")
-    else:
-        logging.warning("⚠️ No validated KP data available from bash logs")
-        # Fallback: try fetching current KP from NOAA as backup
+    # Read validated KP from environment variable (set by bash script via GitHub Actions)
+    kp_val = None
+    validated_kp_str = os.getenv("VALIDATED_KP")
+    if validated_kp_str:
+        try:
+            kp_val = float(validated_kp_str)
+            logging.info(f"✅ Using validated KP from bash script: {kp_val:.1f}")
+        except ValueError:
+            logging.warning(f"Invalid VALIDATED_KP env var: {validated_kp_str}")
+    
+    # Fallback 1: Try reading from log files
+    if kp_val is None:
+        kp_val = get_validated_kp()
+        if kp_val is not None:
+            logging.info(f"Using validated KP from log files: {kp_val:.1f}")
+    
+    # Fallback 2: Fetch from NOAA
+    if kp_val is None:
+        logging.warning("⚠️ No validated KP from bash - trying NOAA fallback")
         kp_val = fetch_current_kp()
         if kp_val is not None:
             logging.info(f"Using fallback NOAA KP: {kp_val:.1f}")
-        else:
-            # Last resort: since bash validation passed, assume minimum threshold (>1)
-            # This ensures posts always show a KP value when aurora is detected
-            kp_val = MIN_KP_INDEX + 0.5  # Conservative estimate: just above threshold
-            logging.warning(f"⚠️ Using estimated KP: {kp_val:.1f} (bash validation passed but no specific value available)")
+    
+    # Fallback 3: Conservative estimate
+    if kp_val is None:
+        kp_val = MIN_KP_INDEX + 0.5
+        logging.warning(f"⚠️ Using estimated KP: {kp_val:.1f} (bash validation passed but no value available)")
 
     global azure_rate_limited
     azure_rate_limited = False

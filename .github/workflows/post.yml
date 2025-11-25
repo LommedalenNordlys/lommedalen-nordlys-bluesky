@@ -27,7 +27,12 @@ jobs:
       - name: Check KP index for aurora activity
         id: kp_check
         if: steps.darkness.outcome == 'success'
-        run: bash src/check_kp_multi.sh 59.959103 10.4592208 1 1.5
+        run: |
+          OUTPUT=$(bash src/check_kp_multi.sh 59.959103 10.4592208 1 1.5)
+          echo "$OUTPUT"
+          # Extract VALIDATED_KP from output and save to GITHUB_OUTPUT
+          VALIDATED_KP=$(echo "$OUTPUT" | grep "VALIDATED_KP=" | cut -d'=' -f2)
+          echo "validated_kp=$VALIDATED_KP" >> $GITHUB_OUTPUT
         continue-on-error: true
         # Check aurora activity from NOAA and YR.no sources (OR logic)
         # Exits early if both sources show no activity, saving processing time
@@ -89,6 +94,7 @@ jobs:
           SUN_LAT: 59.95
           SUN_LNG: 10.466667
           MIN_KP: 1
+          VALIDATED_KP: ${{ steps.kp_check.outputs.validated_kp }}
 
       - name: Save shuffle state
         uses: actions/cache/save@v4
@@ -126,7 +132,11 @@ jobs:
       - name: KP / Aurora potential (Nordkapp)
         id: kp_nordkapp
         if: steps.darkness_nordkapp.outcome == 'success'
-        run: bash src/check_kp_multi_nordkapp.sh 1 1.5
+        run: |
+          OUTPUT=$(bash src/check_kp_multi_nordkapp.sh 1 1.5)
+          echo "$OUTPUT"
+          VALIDATED_KP=$(echo "$OUTPUT" | grep "VALIDATED_KP=" | cut -d'=' -f2)
+          echo "validated_kp=$VALIDATED_KP" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       - name: Persist Nordkapp KP log data
@@ -164,6 +174,7 @@ jobs:
           BSKY_PASSWORD: ${{ secrets.BSKY_PASSWORD }}
           KEY_GITHUB_TOKEN: ${{ secrets.KEY_GITHUB_TOKEN }}
           MIN_KP: 1
+          VALIDATED_KP: ${{ steps.kp_nordkapp.outputs.validated_kp }}
 
       - name: Cleanup Nordkapp temp files
         if: always()
