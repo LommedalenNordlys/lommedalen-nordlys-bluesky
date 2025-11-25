@@ -84,11 +84,12 @@ echo "📡 Fetching YR.no aurora forecast for location ${YR_LOCATION_ID}"
 YR_RESP=$(curl -s --max-time 15 "$YR_URL" 2>/dev/null || true)
 
 if [[ -n "$YR_RESP" ]]; then
-  # Get current UTC time
-  NOW_UTC=$(date -u +"%Y-%m-%dT%H:%M:%S")
+  # YR.no returns timestamps in local timezone (+01:00 for Norway)
+  # Convert current UTC time to match YR's timezone for accurate interval matching
+  NOW_LOCAL=$(date -u -d "1 hour" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || date -u -v+1H +"%Y-%m-%dT%H:%M:%S")
   
   # Find first interval that contains current time and extract kpIndex (primary) and auroraValue (secondary)
-  YR_DATA=$(echo "$YR_RESP" | jq -r --arg now "$NOW_UTC" '
+  YR_DATA=$(echo "$YR_RESP" | jq -r --arg now "$NOW_LOCAL" '
     .shortIntervals // []
     | map(select(.start <= ($now + "+01:00") and .end > ($now + "+01:00")))
     | first

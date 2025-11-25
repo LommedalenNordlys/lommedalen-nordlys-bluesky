@@ -37,7 +37,7 @@ fi
 # YR.no
 YR_RESP=$(curl -s --max-time 15 "$YR_URL" || true)
 if [[ -n "$YR_RESP" ]]; then
-  NOW=$(date -u +"%Y-%m-%dT%H:%M:%S")
+  NOW=$(date -u -d "1 hour" +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || date -u -v+1H +"%Y-%m-%dT%H:%M:%S")
   YR_DATA=$(echo "$YR_RESP" | jq -r --arg now "$NOW" '(.shortIntervals // []) | map(select(.start <= ($now+"+01:00") and .end > ($now+"+01:00"))) | first | if . then {kp: (.kpIndex // 0), aurora: (.auroraValue // 0)} else {kp: 0, aurora: 0} end')
   YR_KP_INDEX=$(echo "$YR_DATA" | jq -r '.kp // 0')
   YR_AURORA_MAX=$(echo "$YR_DATA" | jq -r '.aurora // 0')
