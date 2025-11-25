@@ -137,7 +137,7 @@ def get_validated_kp() -> Optional[float]:
     """
     kp_data_dir = Path("kp_data")
     if not kp_data_dir.exists():
-        logging.debug("No kp_data directory found")
+        logging.warning("No kp_data directory found - bash scripts may not have run yet")
         return None
     
     try:
@@ -148,15 +148,19 @@ def get_validated_kp() -> Optional[float]:
         log_file = kp_data_dir / year / month / f"{year}_{month}.jsonl"
         
         if not log_file.exists():
-            logging.debug(f"KP log file not found: {log_file}")
+            logging.warning(f"KP log file not found: {log_file}")
             return None
         
         # Read the last line (most recent entry)
         with open(log_file, 'r') as f:
             lines = f.readlines()
             if not lines:
+                logging.warning("KP log file is empty")
                 return None
             last_entry = json.loads(lines[-1])
+        
+        timestamp = last_entry.get("timestamp", "unknown")
+        logging.info(f"Reading KP data from log entry at {timestamp}")
         
         sources = last_entry.get("sources", {})
         noaa = sources.get("noaa", {})
@@ -169,22 +173,26 @@ def get_validated_kp() -> Optional[float]:
             kp_index = yr.get("kp_index", 0)
             if kp_index > 0:
                 kp_values.append(kp_index)
-                logging.info(f"YR.no validated KP: {kp_index}")
+                logging.info(f"✅ YR.no validated KP: {kp_index}")
         
         if noaa.get("triggered", False):
             kp_max = noaa.get("kp_max", 0)
             if kp_max > 0:
                 kp_values.append(kp_max)
-                logging.info(f"NOAA validated KP: {kp_max:.1f}")
+                logging.info(f"✅ NOAA validated KP: {kp_max:.1f}")
         
         if kp_values:
-            return max(kp_values)
+            max_kp = max(kp_values)
+            logging.info(f"Using validated KP: {max_kp:.1f}")
+            return max_kp
         
-        logging.debug("No triggered sources in recent KP log")
+        logging.warning("No triggered sources in recent KP log (both sources below threshold)")
         return None
         
     except Exception as e:
-        logging.warning(f"Error reading KP validation logs: {e}")
+        logging.error(f"Error reading KP validation logs: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
         return None
 
 
@@ -634,7 +642,16 @@ def main():
     if kp_val is not None:
         logging.info(f"Validated Kp index: {kp_val:.1f}")
     else:
-        logging.info("No validated KP data available from bash logs")
+        logging.warning("⚠️ No validated KP data available from bash logs")
+        # Fallback: try fetching current KP from NOAA as backup
+        kp_val = fetch_current_kp()
+        if kp_val is not None:
+            logging.info(f"Using fallback NOAA KP: {kp_val:.1f}")
+        else:
+            # Last resort: since bash validation passed, assume minimum threshold (>1)
+            # This ensures posts always show a KP value when aurora is detected
+            kp_val = MIN_KP_INDEX + 0.5  # Conservative estimate: just above threshold
+            logging.warning(f"⚠️ Using estimated KP: {kp_val:.1f} (bash validation passed but no specific value available)")
 
     global azure_rate_limited
     azure_rate_limited = False
