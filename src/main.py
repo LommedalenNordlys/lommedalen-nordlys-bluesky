@@ -569,7 +569,12 @@ def main():
 
     # Note: KP index validation is handled by bash scripts (check_kp_multi.sh)
     # before this Python script runs in the GitHub Actions workflow.
-    # No need to re-validate here.
+    # Fetch KP for informational/display purposes only (not used as a gate).
+    kp_val = fetch_current_kp()
+    if kp_val is not None:
+        logging.info(f"Current Kp index (NOAA): {kp_val:.1f}")
+    else:
+        logging.info("Kp index (NOAA) unavailable")
 
     global azure_rate_limited
     azure_rate_limited = False
