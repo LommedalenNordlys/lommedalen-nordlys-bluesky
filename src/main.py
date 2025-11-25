@@ -128,6 +128,66 @@ def fetch_current_kp(lat: float = 59.0, lon: float = 10.0) -> Optional[float]:
     logging.info(f"Local Ovation intensity (proxy Kp) at ~({target_lat},{target_lon}) = {kp_local:.2f}")
     return kp_local
 
+
+def get_validated_kp() -> Optional[float]:
+    """Read the most recent KP data from bash script logs (multi-source validation).
+    
+    Returns the highest KP value from sources that triggered (YR kpIndex or NOAA kp_max),
+    or None if no recent data available.
+    """
+    kp_data_dir = Path("kp_data")
+    if not kp_data_dir.exists():
+        logging.debug("No kp_data directory found")
+        return None
+    
+    try:
+        # Find the most recent JSONL file
+        now = datetime.now()
+        year = now.strftime("%Y")
+        month = now.strftime("%m")
+        log_file = kp_data_dir / year / month / f"{year}_{month}.jsonl"
+        
+        if not log_file.exists():
+            logging.debug(f"KP log file not found: {log_file}")
+            return None
+        
+        # Read the last line (most recent entry)
+        with open(log_file, 'r') as f:
+            lines = f.readlines()
+            if not lines:
+                return None
+            last_entry = json.loads(lines[-1])
+        
+        sources = last_entry.get("sources", {})
+        noaa = sources.get("noaa", {})
+        yr = sources.get("yr", {})
+        
+        # Return the value from whichever source triggered (or the max if both did)
+        kp_values = []
+        
+        if yr.get("triggered", False):
+            kp_index = yr.get("kp_index", 0)
+            if kp_index > 0:
+                kp_values.append(kp_index)
+                logging.info(f"YR.no validated KP: {kp_index}")
+        
+        if noaa.get("triggered", False):
+            kp_max = noaa.get("kp_max", 0)
+            if kp_max > 0:
+                kp_values.append(kp_max)
+                logging.info(f"NOAA validated KP: {kp_max:.1f}")
+        
+        if kp_values:
+            return max(kp_values)
+        
+        logging.debug("No triggered sources in recent KP log")
+        return None
+        
+    except Exception as e:
+        logging.warning(f"Error reading KP validation logs: {e}")
+        return None
+
+
 def load_cached_sun_times(file: Path = SUN_SCHEDULE_FILE) -> Optional[Dict[str, Any]]:
     """Load cached sun & twilight times from sun_schedule.json written by the update workflow.
 
@@ -569,12 +629,12 @@ def main():
 
     # Note: KP index validation is handled by bash scripts (check_kp_multi.sh)
     # before this Python script runs in the GitHub Actions workflow.
-    # Fetch KP for informational/display purposes only (not used as a gate).
-    kp_val = fetch_current_kp()
+    # Read the validated KP value from bash logs for display in post.
+    kp_val = get_validated_kp()
     if kp_val is not None:
-        logging.info(f"Current Kp index (NOAA): {kp_val:.1f}")
+        logging.info(f"Validated Kp index: {kp_val:.1f}")
     else:
-        logging.info("Kp index (NOAA) unavailable")
+        logging.info("No validated KP data available from bash logs")
 
     global azure_rate_limited
     azure_rate_limited = False
