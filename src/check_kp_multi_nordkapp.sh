@@ -13,6 +13,7 @@ KP_DATA_DIR="kp_data_nordkapp"
 NOAA_TRIGGERED=false
 YR_TRIGGERED=false
 NOAA_KP_MAX=0
+YR_KP_INDEX=0
 YR_AURORA_MAX=0
 if ! command -v jq &>/dev/null; then echo "jq missing"; exit 0; fi
 if ! command -v curl &>/dev/null; then echo "curl missing"; exit 0; fi
@@ -37,11 +38,11 @@ fi
 YR_RESP=$(curl -s --max-time 15 "$YR_URL" || true)
 if [[ -n "$YR_RESP" ]]; then
   NOW=$(date -u +"%Y-%m-%dT%H:%M:%S")
-  CURR=$(echo "$YR_RESP" | jq -r --arg now "$NOW" '(.shortIntervals // []) | map(select(.start <= ($now+"+01:00") and .end > ($now+"+01:00"))) | map(.auroraValue // 0) | max // 0')
-  UPC=$(echo "$YR_RESP" | jq -r '(.shortIntervals // []) | .[0:4] | map(.auroraValue // 0) | max // 0')
-  YR_AURORA_MAX=$CURR; if (( $(echo "$UPC > $YR_AURORA_MAX" | bc -l) )); then YR_AURORA_MAX=$UPC; fi
-  if (( $(echo "$YR_AURORA_MAX > $MIN_KP" | bc -l) )); then YR_TRIGGERED=true; fi
-  echo "  YR auroraValue_max=$YR_AURORA_MAX (current/next) threshold(>)=$MIN_KP"
+  YR_DATA=$(echo "$YR_RESP" | jq -r --arg now "$NOW" '(.shortIntervals // []) | map(select(.start <= ($now+"+01:00") and .end > ($now+"+01:00"))) | first | if . then {kp: (.kpIndex // 0), aurora: (.auroraValue // 0)} else {kp: 0, aurora: 0} end')
+  YR_KP_INDEX=$(echo "$YR_DATA" | jq -r '.kp // 0')
+  YR_AURORA_MAX=$(echo "$YR_DATA" | jq -r '.aurora // 0')
+  if (( $(echo "$YR_KP_INDEX > $MIN_KP" | bc -l) )); then YR_TRIGGERED=true; fi
+  echo "  YR kpIndex=$YR_KP_INDEX auroraValue=$YR_AURORA_MAX (current) threshold(>)=$MIN_KP"
 else
   echo "  YR.no unavailable"
 fi
@@ -49,7 +50,7 @@ TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 YEAR=$(date -u +"%Y")
 MONTH=$(date -u +"%m")
 DIR="$KP_DATA_DIR/$YEAR/$MONTH"; mkdir -p "$DIR"; FILE="$DIR/${YEAR}_${MONTH}.jsonl"
-LINE=$(jq -n --arg ts "$TS" --argjson lat $TARGET_LAT --argjson lon $TARGET_LON --argjson noaa_max $NOAA_KP_MAX --argjson noaa_avg ${NOAA_KP_AVG:-0} --argjson yr_max $YR_AURORA_MAX --arg noaa_trig "$NOAA_TRIGGERED" --arg yr_trig "$YR_TRIGGERED" '{timestamp:$ts, target_lat:$lat, target_lon:$lon, sources:{noaa:{kp_max:$noaa_max,kp_avg:$noaa_avg,triggered:($noaa_trig=="true")}, yr:{aurora_max:$yr_max,triggered:($yr_trig=="true")}}}' )
+LINE=$(jq -n --arg ts "$TS" --argjson lat $TARGET_LAT --argjson lon $TARGET_LON --argjson noaa_max $NOAA_KP_MAX --argjson noaa_avg ${NOAA_KP_AVG:-0} --argjson yr_kp ${YR_KP_INDEX:-0} --argjson yr_aurora $YR_AURORA_MAX --arg noaa_trig "$NOAA_TRIGGERED" --arg yr_trig "$YR_TRIGGERED" '{timestamp:$ts, target_lat:$lat, target_lon:$lon, sources:{noaa:{kp_max:$noaa_max,kp_avg:$noaa_avg,triggered:($noaa_trig=="true")}, yr:{kp_index:$yr_kp,aurora_value:$yr_aurora,triggered:($yr_trig=="true")}}}' )
 echo "$LINE" >> "$FILE"
 echo "  Logged -> $FILE"
 if [[ "$NOAA_TRIGGERED" == "true" || "$YR_TRIGGERED" == "true" ]]; then echo "✅ Nordkapp aurora potential"; exit 0; else echo "🛑 Nordkapp no activity"; exit 1; fi

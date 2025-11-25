@@ -25,6 +25,7 @@ KP_DATA_DIR="kp_data"
 NOAA_TRIGGERED=false
 YR_TRIGGERED=false
 NOAA_KP_MAX=0
+YR_KP_INDEX=0
 YR_AURORA_MAX=0
 
 if ! command -v jq &>/dev/null; then
@@ -86,35 +87,25 @@ if [[ -n "$YR_RESP" ]]; then
   # Get current UTC time
   NOW_UTC=$(date -u +"%Y-%m-%dT%H:%M:%S")
   
-  # Find intervals that overlap current time and extract max auroraValue
-  YR_AURORA_MAX=$(echo "$YR_RESP" | jq -r --arg now "$NOW_UTC" '
+  # Find first interval that contains current time and extract kpIndex (primary) and auroraValue (secondary)
+  YR_DATA=$(echo "$YR_RESP" | jq -r --arg now "$NOW_UTC" '
     .shortIntervals // []
     | map(select(.start <= ($now + "+01:00") and .end > ($now + "+01:00")))
-    | map(.auroraValue // 0)
-    | max // 0
+    | first
+    | if . then {kp: (.kpIndex // 0), aurora: (.auroraValue // 0)} else {kp: 0, aurora: 0} end
   ')
   
-  # Also check next few hours (next 3 intervals = ~3 hours ahead)
-  YR_UPCOMING_MAX=$(echo "$YR_RESP" | jq -r '
-    .shortIntervals // []
-    | .[0:3]
-    | map(.auroraValue // 0)
-    | max // 0
-  ')
+  YR_KP_INDEX=$(echo "$YR_DATA" | jq -r '.kp // 0')
+  YR_AURORA_MAX=$(echo "$YR_DATA" | jq -r '.aurora // 0')
   
-  # Use the higher of current or upcoming
-  if (( $(echo "$YR_UPCOMING_MAX > $YR_AURORA_MAX" | bc -l) )); then
-    YR_AURORA_MAX=$YR_UPCOMING_MAX
-  fi
+  printf "  📊 YR.no: kpIndex=%.0f auroraValue=%.2f (current interval) threshold(>)=%.2f\n" "$YR_KP_INDEX" "$YR_AURORA_MAX" "$MIN_KP"
   
-  printf "  📊 YR.no: max auroraValue=%.2f (current/next 3hrs) threshold(>)=%.2f\n" "$YR_AURORA_MAX" "$MIN_KP"
-  
-  YR_MEETS=$(echo "$YR_AURORA_MAX > $MIN_KP" | bc -l || echo 0)
+  YR_MEETS=$(echo "$YR_KP_INDEX > $MIN_KP" | bc -l || echo 0)
   if [[ "$YR_MEETS" == "1" ]]; then
     YR_TRIGGERED=true
-    echo "  ✅ YR.no indicates aurora potential (auroraValue $YR_AURORA_MAX > $MIN_KP)"
+    echo "  ✅ YR.no indicates aurora potential (kpIndex $YR_KP_INDEX > $MIN_KP)"
   else
-    echo "  ❌ YR.no below strict threshold (auroraValue $YR_AURORA_MAX <= $MIN_KP)"
+    echo "  ❌ YR.no below strict threshold (kpIndex $YR_KP_INDEX <= $MIN_KP)"
   fi
 else
   echo "  ⚠️ YR.no data unavailable"
@@ -134,7 +125,8 @@ LOG_LINE=$(jq -n \
   --argjson lon "$TARGET_LON" \
   --argjson noaa_max "$NOAA_KP_MAX" \
   --argjson noaa_avg "${NOAA_KP_AVG:-0}" \
-  --argjson yr_max "$YR_AURORA_MAX" \
+  --argjson yr_kp "${YR_KP_INDEX:-0}" \
+  --argjson yr_aurora "$YR_AURORA_MAX" \
   --arg noaa_triggered "$NOAA_TRIGGERED" \
   --arg yr_triggered "$YR_TRIGGERED" \
   '{
@@ -143,7 +135,7 @@ LOG_LINE=$(jq -n \
     target_lon: $lon,
     sources: {
       noaa: {kp_max: $noaa_max, kp_avg: $noaa_avg, triggered: ($noaa_triggered == "true")},
-      yr: {aurora_max: $yr_max, triggered: ($yr_triggered == "true")}
+      yr: {kp_index: $yr_kp, aurora_value: $yr_aurora, triggered: ($yr_triggered == "true")}
     }
   }'
 )
