@@ -17,7 +17,7 @@ YR_URL="https://www.yr.no/api/v0/locations/${YR_LOCATION_ID}/auroraforecast?lang
 
 TARGET_LAT=${1:-59.959103}
 TARGET_LON=${2:-10.4592208}
-MIN_KP=${3:-1}
+MIN_KP=${3:-3}
 RADIUS=${4:-1.5}
 KP_DATA_DIR="kp_data"
 

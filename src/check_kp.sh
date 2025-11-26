@@ -10,7 +10,7 @@ set -euo pipefail
 OVATION_URL="https://services.swpc.noaa.gov/json/ovation_aurora_latest.json"
 TARGET_LAT=${1:-59}
 TARGET_LON=${2:-10}
-MIN_KP=${3:-1}
+MIN_KP=${3:-3}
 KP_DATA_DIR="kp_data"
 
 # Function to save KP data with timestamp

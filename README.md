@@ -5,7 +5,7 @@ An automated bot that monitors webcams in the Lommedalen area for aurora boreali
 ## How It Works
 
 1. **Darkness Gate** – Fetches sunrise/sunset & twilight boundaries; exits early if it isn't dark enough.
-2. **Kp Index Gate** – Checks current planetary Kp index from NOAA; exits if below threshold (default: 4).
+2. **Kp Index Gate** – Checks current planetary Kp index from NOAA; exits if below threshold (default: 3).
 3. **Image Download** – Pulls current frames from configured public webcams.
 4. **Color Pre-filter** – Fast heuristic for aurora-like greens/purples to reduce AI calls.
 5. **AI Confirmation** – GPT‑4o Vision answers yes/no for aurora presence; handles resize & rate limits.
@@ -25,7 +25,7 @@ Defined per view in `webcam_locations.json`:
 ## Features
 
 - **Darkness Gate**: Skips processing entirely when twilight data indicates it's still light.
-- **Kp Index Gate**: Requires minimum planetary Kp index (default: 4) from NOAA to proceed.
+- **Kp Index Gate**: Requires minimum planetary Kp index (default: 3) from NOAA to proceed.
 - **Location Tracking**: Each post includes the view where aurora was detected.
 - **Fair Processing**: Shuffles webcam order to vary observation times.
 - **Color Pre-filtering**: Quick scan for aurora-like colors before AI check.
@@ -82,7 +82,7 @@ Edit these variables in `src/main.py`:
 ```python
 MAX_RUNTIME_MINUTES = 20    # Max runtime per session
 IMAGES_PER_SESSION = 30     # Images to process per session
-MIN_KP_INDEX = 4            # Minimum Kp index required (0-9 scale)
+MIN_KP_INDEX = 3            # Minimum Kp index required (0-9 scale)
 ## Schedule
 
 GitHub Actions currently runs every 30 minutes during typical dark hours. Because the code now performs a dynamic darkness check, you can optionally widen the cron schedule (e.g. run 24/7) and rely on fast early exits.
@@ -91,7 +91,7 @@ GitHub Actions currently runs every 30 minutes during typical dark hours. Becaus
 ## Pipeline Overview
 
 1. Darkness check (sunrise-sunset API for twilight boundaries)
-2. Kp index check (NOAA real-time solar wind data; minimum 4.0)
+2. Kp index check (NOAA real-time solar wind data; minimum 3.0)
 3. Download webcam images
 4. Color heuristic pre-filter (green/purple detection)
 5. AI verification (GPT-4o Vision yes/no) with automatic resize & retry
