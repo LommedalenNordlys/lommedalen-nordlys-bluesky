@@ -162,7 +162,6 @@ Feel free to:
 ## Resources
 
 - [YR.no Aurora Forecast API](https://www.yr.no/en/content/1-83651/the-api-now-supports-an-auroraforecast-endpoint) - Real-time aurora data used by the bot
-- [Space Weather Prediction Center](https://www.swpc.noaa.gov/) - Space weather information
 - [Aurora forecast for Norway](https://www.aurora-service.eu/aurora-forecast/) - Additional forecast source
 - [Bluesky API Documentation](https://docs.bsky.app/) - Bluesky API reference
 
