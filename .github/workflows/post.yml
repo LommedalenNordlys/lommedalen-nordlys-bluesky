@@ -28,7 +28,7 @@ jobs:
         id: kp_check
         if: steps.darkness.outcome == 'success'
         run: |
-          OUTPUT=$(bash src/check_kp_multi.sh 59.959103 10.4592208 3)
+          OUTPUT=$(bash src/check_kp_multi.sh 3)
           echo "$OUTPUT"
           # Extract VALIDATED_KP from output and save to GITHUB_OUTPUT
           VALIDATED_KP=$(echo "$OUTPUT" | grep "VALIDATED_KP=" | cut -d'=' -f2)

@@ -3,17 +3,14 @@
 # KP/aurora check using YR.no API.
 # Returns exit 0 if YR.no indicates aurora activity (kpIndex > threshold), else 1.
 #
-# Usage: check_kp_multi.sh <lat> <lon> <min_kp> [yr_location_id]
+# Usage: check_kp_multi.sh <min_kp> [yr_location_id]
 
 set -euo pipefail
 
 # Configuration
-YR_LOCATION_ID=${4:-"1-72662"}  # Default: Lommedalen
+MIN_KP=${1:-3}
+YR_LOCATION_ID=${2:-"1-72662"}  # Default: Lommedalen
 YR_URL="https://www.yr.no/api/v0/locations/${YR_LOCATION_ID}/auroraforecast?language=nb"
-
-TARGET_LAT=${1:-59.959103}
-TARGET_LON=${2:-10.4592208}
-MIN_KP=${3:-3}
 KP_DATA_DIR="kp_data"
 
 # Result trackers
@@ -76,15 +73,13 @@ FILE="${DIR}/${YEAR}_${MONTH}.jsonl"
 
 LOG_LINE=$(jq -n \
   --arg ts "$TS" \
-  --argjson lat "$TARGET_LAT" \
-  --argjson lon "$TARGET_LON" \
+  --arg location_id "$YR_LOCATION_ID" \
   --argjson yr_kp "${YR_KP_INDEX:-0}" \
   --argjson yr_aurora "$YR_AURORA_MAX" \
   --arg yr_triggered "$YR_TRIGGERED" \
   '{
     timestamp: $ts,
-    target_lat: $lat,
-    target_lon: $lon,
+    location_id: $location_id,
     yr: {kp_index: $yr_kp, aurora_value: $yr_aurora, triggered: ($yr_triggered == "true")}
   }'
 )

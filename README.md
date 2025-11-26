@@ -143,12 +143,7 @@ Trigger a manual run:
 
 - Tryvann: yr.no public webcams (directional views)
 - Sylling: yr.no public webcams
-## Resources
-
-- [YR.no Aurora Forecast API](https://www.yr.no/en/content/1-83651/the-api-now-supports-an-auroraforecast-endpoint) - Real-time aurora data used by the bot
-- [Space Weather Prediction Center](https://www.swpc.noaa.gov/) - Official NOAA space weather site
-- [Aurora forecast for Norway](https://www.aurora-service.eu/aurora-forecast/) - Additional forecast source
-- [Bluesky API Documentation](https://docs.bsky.app/) - Bluesky API reference
+## Privacy
 
 - Only processes public webcam feeds
 - No personal data collected or stored
@@ -166,9 +161,10 @@ Feel free to:
 
 ## Resources
 
-- [Space Weather Prediction Center](https://www.swpc.noaa.gov/)
-- [Aurora forecast for Norway](https://www.aurora-service.eu/aurora-forecast/)
-- [Bluesky API Documentation](https://docs.bsky.app/)
+- [YR.no Aurora Forecast API](https://www.yr.no/en/content/1-83651/the-api-now-supports-an-auroraforecast-endpoint) - Real-time aurora data used by the bot
+- [Space Weather Prediction Center](https://www.swpc.noaa.gov/) - Space weather information
+- [Aurora forecast for Norway](https://www.aurora-service.eu/aurora-forecast/) - Additional forecast source
+- [Bluesky API Documentation](https://docs.bsky.app/) - Bluesky API reference
 
 ## License
 
