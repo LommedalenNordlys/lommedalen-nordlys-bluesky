@@ -232,3 +232,12 @@
     "triggered": true
   }
 }
+{
+  "timestamp": "2025-11-26T22:52:13Z",
+  "location_id": "1-72662",
+  "yr": {
+    "kp_index": 5,
+    "aurora_value": 0.2,
+    "triggered": true
+  }
+}
