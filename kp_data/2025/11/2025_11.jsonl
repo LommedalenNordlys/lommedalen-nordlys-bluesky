@@ -168,3 +168,20 @@
     }
   }
 }
+{
+  "timestamp": "2025-11-26T04:44:39Z",
+  "target_lat": 59.959103,
+  "target_lon": 10.4592208,
+  "sources": {
+    "noaa": {
+      "kp_max": 0,
+      "kp_avg": 0,
+      "triggered": false
+    },
+    "yr": {
+      "kp_index": 3,
+      "aurora_value": 0,
+      "triggered": true
+    }
+  }
+}
