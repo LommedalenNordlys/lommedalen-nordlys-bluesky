@@ -1,7 +1,7 @@
 import json, tempfile
 from pathlib import Path
 from datetime import datetime, UTC
-from src.nordkapp_test import hour_darkness_gate
+from src.main import hour_darkness_gate
 
 
 def make_schedule(start_hour: int, end_hour: int, spans_midnight: bool = True) -> Path:
