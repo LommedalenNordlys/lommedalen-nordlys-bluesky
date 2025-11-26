@@ -5,7 +5,7 @@ An automated bot that monitors webcams in the Lommedalen area for aurora boreali
 ## How It Works
 
 1. **Darkness Gate** – Fetches sunrise/sunset & twilight boundaries; exits early if it isn't dark enough.
-2. **Kp Index Gate** – Checks current planetary Kp index from NOAA; exits if below threshold (default: 3).
+2. **Kp Index Gate** – Checks current planetary Kp index from YR.no; exits if below threshold (default: 3).
 3. **Image Download** – Pulls current frames from configured public webcams.
 4. **Color Pre-filter** – Fast heuristic for aurora-like greens/purples to reduce AI calls.
 5. **AI Confirmation** – GPT‑4o Vision answers yes/no for aurora presence; handles resize & rate limits.
@@ -25,7 +25,7 @@ Defined per view in `webcam_locations.json`:
 ## Features
 
 - **Darkness Gate**: Skips processing entirely when twilight data indicates it's still light.
-- **Kp Index Gate**: Requires minimum planetary Kp index (default: 3) from NOAA to proceed.
+- **Kp Index Gate**: Requires minimum planetary Kp index (default: 3) from YR.no to proceed.
 - **Location Tracking**: Each post includes the view where aurora was detected.
 - **Fair Processing**: Shuffles webcam order to vary observation times.
 - **Color Pre-filtering**: Quick scan for aurora-like colors before AI check.
@@ -91,7 +91,7 @@ GitHub Actions currently runs every 30 minutes during typical dark hours. Becaus
 ## Pipeline Overview
 
 1. Darkness check (sunrise-sunset API for twilight boundaries)
-2. Kp index check (NOAA real-time solar wind data; minimum 3.0)
+2. Kp index check (YR.no aurora forecast; minimum 3.0)
 3. Download webcam images
 4. Color heuristic pre-filter (green/purple detection)
 5. AI verification (GPT-4o Vision yes/no) with automatic resize & retry
@@ -110,7 +110,7 @@ The bot looks for:
 
 **"Not dark enough"** – Expected during daylight/twilight; bot exits quickly.
 **"Kp below threshold"** – Planetary Kp index is too low for aurora activity; bot exits to save resources.
-**"Kp index unavailable"** – NOAA API temporarily down; bot proceeds anyway (fail-open).
+**"Kp index unavailable"** – YR.no API temporarily down; bot proceeds anyway (fail-open).
 **"AI response: no"** – Color heuristic can flag vegetation or lights; AI filter reduces false positives.
 **"Rate limit (429)"** – Azure quota exceeded; bot skips more AI calls until next run.
 **"413 payload too large"** – Image auto-compressed & retried.
@@ -145,7 +145,7 @@ Trigger a manual run:
 - Sylling: yr.no public webcams
 ## Resources
 
-- [NOAA OVATION Aurora Forecast](https://services.swpc.noaa.gov/json/ovation_aurora_latest.json) - Real-time data used by the bot
+- [YR.no Aurora Forecast API](https://www.yr.no/en/content/1-83651/the-api-now-supports-an-auroraforecast-endpoint) - Real-time aurora data used by the bot
 - [Space Weather Prediction Center](https://www.swpc.noaa.gov/) - Official NOAA space weather site
 - [Aurora forecast for Norway](https://www.aurora-service.eu/aurora-forecast/) - Additional forecast source
 - [Bluesky API Documentation](https://docs.bsky.app/) - Bluesky API reference

@@ -130,10 +130,9 @@ def fetch_current_kp(lat: float = 59.0, lon: float = 10.0) -> Optional[float]:
 
 
 def get_validated_kp() -> Optional[float]:
-    """Read the most recent KP data from bash script logs (multi-source validation).
+    """Read the most recent KP data from bash script logs (YR.no validation).
     
-    Returns the highest KP value from sources that triggered (YR kpIndex or NOAA kp_max),
-    or None if no recent data available.
+    Returns the KP index from YR.no if triggered, or None if no recent data available.
     """
     kp_data_dir = Path("kp_data")
     if not kp_data_dir.exists():
@@ -162,31 +161,16 @@ def get_validated_kp() -> Optional[float]:
         timestamp = last_entry.get("timestamp", "unknown")
         logging.info(f"Reading KP data from log entry at {timestamp}")
         
-        sources = last_entry.get("sources", {})
-        noaa = sources.get("noaa", {})
-        yr = sources.get("yr", {})
+        yr = last_entry.get("yr", {})
         
-        # Return the value from whichever source triggered (or the max if both did)
-        kp_values = []
-        
+        # Return KP index if YR.no triggered
         if yr.get("triggered", False):
             kp_index = yr.get("kp_index", 0)
             if kp_index > 0:
-                kp_values.append(kp_index)
-                logging.info(f"✅ YR.no validated KP: {kp_index}")
+                logging.info(f"Using validated KP from YR.no: {kp_index:.1f}")
+                return float(kp_index)
         
-        if noaa.get("triggered", False):
-            kp_max = noaa.get("kp_max", 0)
-            if kp_max > 0:
-                kp_values.append(kp_max)
-                logging.info(f"✅ NOAA validated KP: {kp_max:.1f}")
-        
-        if kp_values:
-            max_kp = max(kp_values)
-            logging.info(f"Using validated KP: {max_kp:.1f}")
-            return max_kp
-        
-        logging.warning("No triggered sources in recent KP log (both sources below threshold)")
+        logging.warning("YR.no not triggered in recent KP log (below threshold)")
         return None
         
     except Exception as e:
