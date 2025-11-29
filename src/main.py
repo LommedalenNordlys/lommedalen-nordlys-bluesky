@@ -27,6 +27,13 @@ except Exception:
 
 load_dotenv()
 
+# Load configuration
+CONFIG_FILE = Path(os.getenv("CONFIG_FILE", "config.json"))
+config = {}
+if CONFIG_FILE.exists():
+    with open(CONFIG_FILE, 'r') as f:
+        config = json.load(f)
+
 # Config (set these in your environment or .env file)
 # NOTE: We used to capture TOKEN at import time, but tests set the env var after importing.
 # To support dynamic updates (e.g. setting KEY_GITHUB_TOKEN in test cases), we now resolve it
@@ -51,20 +58,26 @@ def get_ai_token() -> Optional[str]:
         or os.getenv("API_KEY")
         or TOKEN  # fallback to legacy snapshot if still populated
     )
-ENDPOINT = os.getenv("AZURE_ENDPOINT") or "https://models.inference.ai.azure.com"
-MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o"
 
+# API endpoints and model config
+ENDPOINT = os.getenv("AZURE_ENDPOINT") or config.get("api", {}).get("azure_endpoint", "https://models.inference.ai.azure.com")
+MODEL_NAME = os.getenv("MODEL_NAME") or config.get("api", {}).get("model_name", "gpt-4o")
+
+# File paths from config
 TODAY_FOLDER = Path("today")
 TODAY_FOLDER.mkdir(exist_ok=True)
-WEBCAM_LOCATIONS_FILE = Path("webcam_locations.json")
-SUN_SCHEDULE_FILE = Path("sun_schedule.json")
-SHUFFLE_STATE_FILE = Path("shuffle_state.json")
+WEBCAM_LOCATIONS_FILE = Path(config.get("data", {}).get("webcam_locations_file", "webcam_locations.json"))
+SUN_SCHEDULE_FILE = Path(config.get("data", {}).get("sun_schedule_file", "sun_schedule.json"))
+SHUFFLE_STATE_FILE = Path(config.get("data", {}).get("shuffle_state_file", "shuffle_state.json"))
+
+# Bluesky credentials
 BSKY_HANDLE = os.getenv("BSKY_HANDLE")
 BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
 
-MAX_RUNTIME_MINUTES = int(os.getenv("MAX_RUNTIME_MINUTES", "20"))
-IMAGES_PER_SESSION = int(os.getenv("IMAGES_PER_SESSION", "30"))
-MIN_KP_INDEX = float(os.getenv("MIN_KP", "3"))  # Minimum planetary Kp index required to proceed
+# Aurora detection config from config.json or env vars
+MAX_RUNTIME_MINUTES = int(os.getenv("MAX_RUNTIME_MINUTES") or config.get("aurora", {}).get("max_runtime_minutes", 20))
+IMAGES_PER_SESSION = int(os.getenv("IMAGES_PER_SESSION") or config.get("aurora", {}).get("images_per_session", 30))
+MIN_KP_INDEX = float(os.getenv("MIN_KP") or config.get("aurora", {}).get("min_kp_index", 3))  # Minimum planetary Kp index required to proceed
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 azure_rate_limited = False
@@ -75,7 +88,7 @@ def get_validated_kp() -> Optional[float]:
     
     Returns the KP index from YR.no if triggered, or None if no recent data available.
     """
-    kp_data_dir = Path("kp_data")
+    kp_data_dir = Path(config.get("data", {}).get("kp_log_dir", "kp_data"))
     if not kp_data_dir.exists():
         logging.warning("No kp_data directory found - bash scripts may not have run yet")
         return None

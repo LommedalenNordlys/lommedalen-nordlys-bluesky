@@ -28,7 +28,9 @@ jobs:
         id: kp_check
         if: steps.darkness.outcome == 'success'
         run: |
-          OUTPUT=$(bash src/check_kp_multi.sh 3)
+          # Read MIN_KP from config.json
+          MIN_KP=$(jq -r '.aurora.min_kp_index' config.json)
+          OUTPUT=$(bash src/check_kp_multi.sh "$MIN_KP")
           echo "$OUTPUT"
           # Extract VALIDATED_KP from output and save to GITHUB_OUTPUT
           VALIDATED_KP=$(echo "$OUTPUT" | grep "VALIDATED_KP=" | cut -d'=' -f2)
@@ -40,14 +42,17 @@ jobs:
       - name: Persist KP log data
         if: steps.darkness.outcome == 'success'
         run: |
+          # Get KP data directory from config
+          KP_DATA_DIR=$(jq -r '.data.kp_log_dir' config.json)
+          
           # If kp_data changed (new line appended), commit & push it.
-          if git diff --quiet --exit-code kp_data; then
+          if git diff --quiet --exit-code "$KP_DATA_DIR"; then
             echo "No new KP data to persist"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add kp_data
+          git add "$KP_DATA_DIR"
           COMMIT_MSG="chore: log KP reading $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git commit -m "$COMMIT_MSG" || echo "Nothing to commit"
           git push || echo "Push failed"
@@ -78,7 +83,8 @@ jobs:
         if: steps.darkness.outcome == 'success' && steps.kp_check.outcome == 'success'
         uses: actions/cache/restore@v4
         with:
-          path: shuffle_state.json
+          path: |
+            shuffle_state.json
           key: shuffle-state-v2-${{ github.run_number }}
           restore-keys: |
             shuffle-state-v2-
@@ -91,16 +97,14 @@ jobs:
           BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
           BSKY_PASSWORD: ${{ secrets.BSKY_PASSWORD }}
           KEY_GITHUB_TOKEN: ${{ secrets.KEY_GITHUB_TOKEN }}
-          SUN_LAT: 59.95
-          SUN_LNG: 10.466667
-          MIN_KP: 3
           VALIDATED_KP: ${{ steps.kp_check.outputs.validated_kp }}
 
       - name: Save shuffle state
         uses: actions/cache/save@v4
         if: always() && hashFiles('shuffle_state.json') != ''
         with:
-          path: shuffle_state.json
+          path: |
+            shuffle_state.json
           key: shuffle-state-v2-${{ github.run_number }}
 
       - name: Cleanup temporary files

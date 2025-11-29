@@ -1,0 +1,16 @@
+{
+    "webcams": [
+        {
+            "place": "Location North",
+            "urls": [
+                "https://example.com/webcam1.jpg"
+            ]
+        },
+        {
+            "place": "Location South",
+            "urls": [
+                "https://example.com/webcam2.jpg"
+            ]
+        }
+    ]
+}

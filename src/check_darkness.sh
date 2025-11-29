@@ -5,7 +5,14 @@
 
 set -euo pipefail
 
-SCHEDULE_FILE="sun_schedule.json"
+CONFIG_FILE="${CONFIG_FILE:-config.json}"
+
+# Get schedule file from config or use default
+if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
+  SCHEDULE_FILE=$(jq -r '.data.sun_schedule_file // "sun_schedule.json"' "$CONFIG_FILE")
+else
+  SCHEDULE_FILE="sun_schedule.json"
+fi
 
 # Check if schedule file exists
 if [[ ! -f "$SCHEDULE_FILE" ]]; then

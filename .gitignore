@@ -154,3 +154,5 @@ shuffle_state.json
 # OS files
 .DS_Store
 Thumbs.db
+# Local configuration (use config.example.json as template)
+config.json

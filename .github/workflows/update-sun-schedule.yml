@@ -34,10 +34,14 @@ jobs:
           import requests
           from datetime import datetime, time
 
+          # Load configuration
+          with open('config.json', 'r') as f:
+              config = json.load(f)
+
           # Fetch sun times
-          LAT = 59.95
-          LNG = 10.466667
-          url = f"https://api.sunrise-sunset.org/json?lat={LAT}&lng={LNG}&formatted=0"
+          LAT = config['location']['latitude']
+          LNG = config['location']['longitude']
+          url = config['api']['sunrise_sunset_url'].format(lat=LAT, lng=LNG)
           
           response = requests.get(url, timeout=15)
           response.raise_for_status()
@@ -82,7 +86,7 @@ jobs:
           # Save schedule info
           schedule_info = {
               "updated_at": datetime.utcnow().isoformat() + "Z",
-              "location": {"lat": LAT, "lng": LNG},
+              "location": config['location'],
               "sun_times": results,
               "dark_hours": {
                   "start_hour": start_hour,
@@ -92,7 +96,8 @@ jobs:
               "cron_schedules": cron_schedule
           }
           
-          with open('sun_schedule.json', 'w') as f:
+          schedule_file = config['data']['sun_schedule_file']
+          with open(schedule_file, 'w') as f:
               json.dump(schedule_info, f, indent=2)
           
           print(f"✅ Updated sun schedule")
@@ -106,8 +111,13 @@ jobs:
           import json
           import re
           
+          # Load config
+          with open('config.json', 'r') as f:
+              config = json.load(f)
+          
           # Load schedule info
-          with open('sun_schedule.json', 'r') as f:
+          schedule_file = config['data']['sun_schedule_file']
+          with open(schedule_file, 'r') as f:
               schedule_info = json.load(f)
           
           cron_schedules = schedule_info['cron_schedules']
@@ -145,14 +155,18 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add sun_schedule.json .github/workflows/post.yml
+          
+          # Get schedule file from config
+          SCHEDULE_FILE=$(jq -r '.data.sun_schedule_file' config.json)
+          
+          git add "$SCHEDULE_FILE" .github/workflows/post.yml
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            START_HOUR=$(jq -r '.dark_hours.start_hour' sun_schedule.json)
-            END_HOUR=$(jq -r '.dark_hours.end_hour' sun_schedule.json)
-            UPDATED_AT=$(jq -r '.updated_at' sun_schedule.json)
-            CRON_SCHEDULES=$(jq -r '.cron_schedules | join(", ")' sun_schedule.json)
+            START_HOUR=$(jq -r '.dark_hours.start_hour' "$SCHEDULE_FILE")
+            END_HOUR=$(jq -r '.dark_hours.end_hour' "$SCHEDULE_FILE")
+            UPDATED_AT=$(jq -r '.updated_at' "$SCHEDULE_FILE")
+            CRON_SCHEDULES=$(jq -r '.cron_schedules | join(", ")' "$SCHEDULE_FILE")
             git commit -m "chore: update sun schedule and workflow timing [automated]" \
               -m "Dark hours: ${START_HOUR}:00 - ${END_HOUR}:00 UTC" \
               -m "Cron: ${CRON_SCHEDULES}" \

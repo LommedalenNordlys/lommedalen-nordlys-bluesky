@@ -3,15 +3,34 @@
 # KP/aurora check using YR.no API.
 # Returns exit 0 if YR.no indicates aurora activity (kpIndex > threshold), else 1.
 #
-# Usage: check_kp_multi.sh <min_kp> [yr_location_id]
+# Usage: check_kp_multi.sh [min_kp] [yr_location_id]
 
 set -euo pipefail
 
-# Configuration
-MIN_KP=${1:-3}
-YR_LOCATION_ID=${2:-"1-72662"}  # Default: Lommedalen
-YR_URL="https://www.yr.no/api/v0/locations/${YR_LOCATION_ID}/auroraforecast?language=nb"
-KP_DATA_DIR="kp_data"
+CONFIG_FILE="${CONFIG_FILE:-config.json}"
+
+# Load configuration
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "⚠️ config.json not found; using defaults" >&2
+fi
+
+# Read from config file or use arguments/defaults
+if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
+  DEFAULT_MIN_KP=$(jq -r '.aurora.min_kp_index // 3' "$CONFIG_FILE")
+  DEFAULT_LOCATION_ID=$(jq -r '.location.yr_location_id // "1-72662"' "$CONFIG_FILE")
+  KP_DATA_DIR=$(jq -r '.data.kp_log_dir // "kp_data"' "$CONFIG_FILE")
+  YR_URL_TEMPLATE=$(jq -r '.api.yr_aurora_forecast_url // "https://www.yr.no/api/v0/locations/{location_id}/auroraforecast?language=nb"' "$CONFIG_FILE")
+else
+  DEFAULT_MIN_KP=3
+  DEFAULT_LOCATION_ID="1-72662"
+  KP_DATA_DIR="kp_data"
+  YR_URL_TEMPLATE="https://www.yr.no/api/v0/locations/{location_id}/auroraforecast?language=nb"
+fi
+
+# Configuration (args override config file)
+MIN_KP=${1:-$DEFAULT_MIN_KP}
+YR_LOCATION_ID=${2:-$DEFAULT_LOCATION_ID}
+YR_URL="${YR_URL_TEMPLATE/\{location_id\}/$YR_LOCATION_ID}"
 
 # Result trackers
 YR_TRIGGERED=false
