@@ -2,7 +2,6 @@
 #
 # Quick darkness check using cached sun schedule.
 # Returns exit code 0 if dark, 1 if not dark.
-# Much faster than Python - uses simple hour-based check.
 
 set -euo pipefail
 
@@ -16,8 +15,8 @@ fi
 
 # Check if jq is available
 if ! command -v jq &> /dev/null; then
-    echo "⚠️  jq not found; falling back to Python check" >&2
-    exec python3 src/check_darkness.py
+    echo "⚠️  jq not found; assuming dark (fail-open)" >&2
+    exit 0
 fi
 
 # Get current UTC hour
