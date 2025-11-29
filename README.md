@@ -8,7 +8,7 @@ Example:
   <img
     src="https://github.com/user-attachments/assets/a6e888c8-a53d-4b37-9c0d-134617d04fca"
     alt="Bluesky post showing an aurora alert from Lommedalen Nordlys"
-    width="300">
+    width="500">
 </a>
 
 
