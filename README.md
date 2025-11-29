@@ -4,7 +4,7 @@ An automated bot that monitors webcams for aurora borealis (northern lights) and
 
 Example:
 
-<a href="https://bsky.app/profile/lommedalennordlys.bsky.social/post/3m6i63w5dts2b">
+<a href="https://bsky.app/profile/lommedalennordlys.bsky.social/post/3m6i63w5dts2b" target="_blank" rel="noopener noreferrer">
   <img
     src="https://github.com/user-attachments/assets/a6e888c8-a53d-4b37-9c0d-134617d04fca"
     alt="Bluesky post showing an aurora alert from Lommedalen Nordlys"
