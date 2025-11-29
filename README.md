@@ -2,6 +2,16 @@
 
 An automated bot that monitors webcams for aurora borealis (northern lights) and posts them to Bluesky when detected. Designed to be easily forked and configured for any location with public webcams and YR.no coverage.
 
+Example:
+
+<a href="https://bsky.app/profile/lommedalennordlys.bsky.social/post/3m6i63w5dts2b">
+  <img
+    src="https://github.com/user-attachments/assets/a6e888c8-a53d-4b37-9c0d-134617d04fca"
+    alt="Bluesky post showing an aurora alert from Lommedalen Nordlys"
+    width="300">
+</a>
+
+
 ## 🚀 Quick Start for Your Location
 
 ### 1. Fork this Repository
