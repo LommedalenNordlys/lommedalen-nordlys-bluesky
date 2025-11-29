@@ -637,3 +637,12 @@
     "triggered": false
   }
 }
+{
+  "timestamp": "2025-11-29T05:53:29Z",
+  "location_id": "1-72662",
+  "yr": {
+    "kp_index": 3,
+    "aurora_value": 0,
+    "triggered": false
+  }
+}
