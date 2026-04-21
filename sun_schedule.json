@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-04-20T04:50:03.268847Z",
+  "updated_at": "2026-04-21T04:40:47.949829Z",
   "location": {
     "name": "Lommedalen",
     "latitude": 59.95,
@@ -7,16 +7,16 @@
     "yr_location_id": "1-72662"
   },
   "sun_times": {
-    "sunrise": "2026-04-20T03:44:10+00:00",
-    "sunset": "2026-04-20T18:49:56+00:00",
-    "solar_noon": "2026-04-20T11:17:03+00:00",
-    "day_length": 54346,
-    "civil_twilight_begin": "2026-04-20T02:58:31+00:00",
-    "civil_twilight_end": "2026-04-20T19:35:34+00:00",
-    "nautical_twilight_begin": "2026-04-20T01:52:21+00:00",
-    "nautical_twilight_end": "2026-04-20T20:41:44+00:00",
-    "astronomical_twilight_begin": "2026-04-19T23:56:33+00:00",
-    "astronomical_twilight_end": "2026-04-20T22:37:32+00:00"
+    "sunrise": "2026-04-21T03:41:16+00:00",
+    "sunset": "2026-04-21T18:52:25+00:00",
+    "solar_noon": "2026-04-21T11:16:50+00:00",
+    "day_length": 54669,
+    "civil_twilight_begin": "2026-04-21T02:55:15+00:00",
+    "civil_twilight_end": "2026-04-21T19:38:26+00:00",
+    "nautical_twilight_begin": "2026-04-21T01:47:59+00:00",
+    "nautical_twilight_end": "2026-04-21T20:45:42+00:00",
+    "astronomical_twilight_begin": "2026-04-20T23:35:32+00:00",
+    "astronomical_twilight_end": "2026-04-21T22:58:09+00:00"
   },
   "dark_hours": {
     "start_hour": 23,
