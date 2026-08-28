@@ -61,7 +61,8 @@ def get_ai_token() -> Optional[str]:
 
 # API endpoints and model config
 ENDPOINT = os.getenv("AZURE_ENDPOINT") or config.get("api", {}).get("azure_endpoint", "https://models.inference.ai.azure.com")
-MODEL_NAME = os.getenv("MODEL_NAME") or config.get("api", {}).get("model_name", "gpt-4o")
+# GitHub Copilot Free/GitHub Models accounts use Auto model selection.
+MODEL_NAME = os.getenv("MODEL_NAME") or config.get("api", {}).get("model_name", "auto")
 
 # File paths from config
 TODAY_FOLDER = Path("today")

@@ -14,7 +14,7 @@
     "yr_aurora_forecast_url": "https://www.yr.no/api/v0/locations/{location_id}/auroraforecast?language=nb",
     "sunrise_sunset_url": "https://api.sunrise-sunset.org/json?lat={lat}&lng={lng}&formatted=0",
     "azure_endpoint": "https://models.inference.ai.azure.com",
-    "model_name": "gpt-4o"
+    "model_name": "auto"
   },
   "data": {
     "kp_log_dir": "kp_data",
