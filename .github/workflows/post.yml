@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Quick darkness check
         id: darkness
@@ -60,7 +60,7 @@ jobs:
 
       - name: Set up Python 3.11
         if: steps.darkness.outcome == 'success' && steps.kp_check.outcome == 'success'
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
