@@ -79,6 +79,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Set up Node.js 22
+        if: steps.darkness.outcome == 'success' && steps.kp_check.outcome == 'success'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install GitHub Copilot CLI
+        if: steps.darkness.outcome == 'success' && steps.kp_check.outcome == 'success'
+        run: npm install -g @github/copilot
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT }}
+
       - name: Restore shuffle state
         if: steps.darkness.outcome == 'success' && steps.kp_check.outcome == 'success'
         uses: actions/cache/restore@v4
@@ -96,7 +108,7 @@ jobs:
         env:
           BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
           BSKY_PASSWORD: ${{ secrets.BSKY_PASSWORD }}
-          KEY_GITHUB_TOKEN: ${{ secrets.KEY_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.COPILOT_PAT }}
           VALIDATED_KP: ${{ steps.kp_check.outputs.validated_kp }}
 
       - name: Save shuffle state

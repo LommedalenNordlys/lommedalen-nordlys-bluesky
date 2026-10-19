@@ -99,7 +99,7 @@ Add these secrets:
 
 - `BSKY_PASSWORD`: Your Bluesky app password (Settings → App Passwords)
 
-- `KEY_GITHUB_TOKEN`: Azure AI token for GPT-4o vision API
+- `COPILOT_PAT`: GitHub token with access to GitHub Copilot for Copilot CLI authentication
 
 - `PAT_TOKEN`: GitHub Personal Access Token (for automated commits)
 
@@ -169,7 +169,7 @@ Manually trigger a test run:
 
 1. **Color Pre-filter** – Fast heuristic for aurora colors (green/purple)
 
-1. **AI Confirmation** – GPT-4o Vision validates aurora presence
+1. **AI Confirmation** – GitHub Copilot (Auto model selection) validates aurora presence
 
 1. **Posting** – Uploads to Bluesky with location metadata
 
@@ -198,16 +198,9 @@ CONFIG_FILE=config.custom.json
 
 ### AI Model
 
-For Copilot Free/GitHub Models accounts, use Auto model selection:
-
-```json
-{
-  "api": {
-    "azure_endpoint": "https://your-endpoint.com",
-    "model_name": "auto"
-  }
-}
-```
+The workflow installs GitHub Copilot CLI and uses its `auto` model selection to choose an
+eligible vision-capable model. Add a `COPILOT_PAT` Actions secret with GitHub Copilot access;
+the workflow passes it to the CLI as `GH_TOKEN`.
 
 ## 📊 Monitoring
 
@@ -267,7 +260,7 @@ MIT License - Feel free to fork and modify for your location!
 
 - Sun times: [sunrise-sunset.org](https://sunrise-sunset.org/)
 
-- AI vision: Azure OpenAI GPT-4o
+- AI vision: GitHub Copilot CLI with automatic model selection
 
 - Social platform: [Bluesky](https://bsky.app/)
 

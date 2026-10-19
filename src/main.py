@@ -4,11 +4,13 @@ Lommedalen Aurora Borealis Detection Bot for Bluesky
 Monitors webcams for northern lights and posts to Bluesky when detected.
 """
 
-import base64
 import json
 import logging
 import os
 import random
+import re
+import shutil
+import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -34,35 +36,9 @@ if CONFIG_FILE.exists():
     with open(CONFIG_FILE, 'r') as f:
         config = json.load(f)
 
-# Config (set these in your environment or .env file)
-# NOTE: We used to capture TOKEN at import time, but tests set the env var after importing.
-# To support dynamic updates (e.g. setting KEY_GITHUB_TOKEN in test cases), we now resolve it
-# on demand via get_ai_token(). The legacy TOKEN variable remains for backward compatibility
-# but may be None and is no longer authoritative.
-TOKEN = os.getenv("KEY_GITHUB_TOKEN") or os.getenv("AZURE_API_KEY") or os.getenv("API_KEY")  # deprecated static snapshot
-
-def get_ai_token() -> Optional[str]:
-    """Return current AI auth token from environment.
-
-    Checks several possible variable names to allow flexibility in CI/local setups:
-    - KEY_GITHUB_TOKEN (used in tests)
-    - AZURE_API_KEY (potential Azure key name)
-    - API_KEY (generic fallback)
-
-    Returns:
-        The token string if found, else None.
-    """
-    return (
-        os.getenv("KEY_GITHUB_TOKEN")
-        or os.getenv("AZURE_API_KEY")
-        or os.getenv("API_KEY")
-        or TOKEN  # fallback to legacy snapshot if still populated
-    )
-
-# API endpoints and model config
-ENDPOINT = os.getenv("AZURE_ENDPOINT") or config.get("api", {}).get("azure_endpoint", "https://models.inference.ai.azure.com")
-# GitHub Copilot Free/GitHub Models accounts use Auto model selection.
-MODEL_NAME = os.getenv("MODEL_NAME") or config.get("api", {}).get("model_name", "auto")
+def get_copilot_token() -> Optional[str]:
+    """Return the GitHub token used to authenticate Copilot CLI."""
+    return os.getenv("GH_TOKEN") or os.getenv("COPILOT_PAT")
 
 # File paths from config
 TODAY_FOLDER = Path("today")
@@ -81,7 +57,6 @@ IMAGES_PER_SESSION = int(os.getenv("IMAGES_PER_SESSION") or config.get("aurora",
 MIN_KP_INDEX = float(os.getenv("MIN_KP") or config.get("aurora", {}).get("min_kp_index", 3))  # Minimum planetary Kp index required to proceed
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-azure_rate_limited = False
 
 
 def get_validated_kp() -> Optional[float]:
@@ -354,135 +329,56 @@ def check_for_aurora_colors(image_path: Path, min_green_pixels: int = 50) -> boo
         return False
 
 
-def get_image_data_url(image_file: Path, max_size=(800, 600), quality: int = 85) -> Optional[str]:
-    """Return a base64 data URL for the image (JPEG) after optional resizing."""
-    try:
-        img = Image.open(image_file)
-        original = img.size
-        if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
-            img.thumbnail(max_size, Image.Resampling.LANCZOS)
-            logging.debug(f"Resized image from {original} to {img.size}")
-        import io
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=quality, optimize=True)
-        buf.seek(0)
-        b64 = base64.b64encode(buf.read()).decode("ascii")
-        return f"data:image/jpeg;base64,{b64}"
-    except Exception as e:
-        logging.error(f"Could not create data URL for {image_file}: {e}")
-        return None
-
-
 def ask_ai_if_aurora(image_path: Path, location: str) -> Optional[str]:
-    """
-    Ask an external AI endpoint whether the image contains aurora.
-    Returns 'yes'/'no' or None on error.
-    This implementation is intentionally generic — adjust payload for your specific model endpoint.
-    """
-    global azure_rate_limited
-
-    if azure_rate_limited:
-        logging.info("Azure previously rate-limited; skipping ask_ai_if_aurora")
-        return None
-
-    token = get_ai_token()
+    """Ask GitHub Copilot whether the image contains aurora."""
+    token = get_copilot_token()
     if not token:
-        logging.error("No API token configured for AI calls")
+        logging.error("No GitHub token configured for Copilot CLI")
+        return None
+    if shutil.which("copilot") is None:
+        logging.error("GitHub Copilot CLI is not installed")
         return None
 
-    # Use smaller image size to avoid token limits (max 8000 tokens for gpt-4o)
-    image_data_url = get_image_data_url(image_path, max_size=(400, 300), quality=60)
-    if not image_data_url:
-        return None
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}"
-    }
-
-    # Minimal prompt asking for yes/no answer
-    prompt_text = (
-        "Does this webcam image show aurora borealis (northern lights) in the sky? "
-        "Look for green, purple, or pink glowing lights in the night sky. Answer with only 'yes' or 'no'."
+    prompt = (
+        f"Does this webcam image from {location} show aurora borealis (northern lights) in the sky? "
+        "Look for green, purple, or pink glowing lights in the night sky. "
+        "Answer with only 'yes' or 'no'."
     )
 
-    # Azure OpenAI-compatible format
-    body = {
-        "model": MODEL_NAME,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_text
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": image_data_url,
-                            "detail": "low"
-                        }
-                    }
-                ]
-            }
-        ],
-        "max_tokens": 10
-    }
-
     try:
-        resp = requests.post(f"{ENDPOINT}/chat/completions", json=body, headers=headers, timeout=30)
-    except Exception as e:
-        logging.error(f"Error calling AI endpoint: {e}")
+        result = subprocess.run(
+            [
+                "copilot",
+                "--model", "auto",
+                "-p", prompt,
+                "--attachment", str(image_path),
+                "--no-ask-user",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**os.environ, "GH_TOKEN": token},
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logging.error("Copilot image verification timed out")
+        return None
+    except OSError as error:
+        logging.error("Could not run GitHub Copilot CLI: %s", error)
         return None
 
-    # If image is still too large, retry with even smaller size
-    if resp.status_code == 413:
-        logging.warning("Image still too large (413), retrying with smaller size...")
-        smaller_image_url = get_image_data_url(image_path, max_size=(200, 150), quality=50)
-        if smaller_image_url:
-            body["messages"][0]["content"][1]["image_url"]["url"] = smaller_image_url
-            try:
-                resp = requests.post(f"{ENDPOINT}/chat/completions", json=body, headers=headers, timeout=30)
-            except Exception as e:
-                logging.error(f"Retry failed: {e}")
-                return None
-        else:
-            logging.error("Could not create smaller image")
-            return None
-
-    if resp.status_code == 429:
-        azure_rate_limited = True
-        logging.warning("Azure rate-limited (429). Will skip further Azure calls this session.")
-        return None
-    if resp.status_code != 200:
-        logging.error(f"AI endpoint returned status {resp.status_code}: {resp.text[:400]}")
+    if result.returncode != 0:
+        logging.error("Copilot CLI failed: %s", result.stderr.strip())
         return None
 
-    try:
-        data = resp.json()
-        # Try a few common response locations depending on provider
-        candidate = None
-        # Common OpenAI-style
-        if "choices" in data and data["choices"]:
-            candidate = data["choices"][0].get("message", {}).get("content") or data["choices"][0].get("text")
-        # Some endpoints return 'output' or 'result'
-        if not candidate:
-            candidate = data.get("output") or data.get("result") or data.get("content")
-        if not candidate:
-            logging.debug("AI returned no textual content")
-            return None
-        result = str(candidate).strip().lower()
-        logging.info(f"AI response: {result}")
-        if "yes" in result:
-            return "yes"
-        if "no" in result:
-            return "no"
-        # fallback: return raw
-        return result
-    except Exception as e:
-        logging.error(f"Error parsing AI response: {e}")
+    answer = re.search(r"\b(yes|no)\b", result.stdout, re.IGNORECASE)
+    if not answer:
+        logging.error("Copilot CLI returned no yes/no answer: %s", result.stdout.strip())
         return None
+
+    normalized_answer = answer.group(1).lower()
+    logging.info("Copilot response: %s", normalized_answer)
+    return normalized_answer
 
 
 def build_post_text(location: str, kp_value: Optional[float], test: bool) -> str:
@@ -602,9 +498,6 @@ def main():
         kp_val = MIN_KP_INDEX + 0.5
         logging.warning(f"⚠️ Using estimated KP: {kp_val:.1f} (bash validation passed but no value available)")
 
-    global azure_rate_limited
-    azure_rate_limited = False
-
     webcams, current_index, stats = get_shuffled_urls()
     if not webcams:
         logging.error("No webcams found; exiting")
@@ -613,10 +506,10 @@ def main():
     logging.info(f"Resuming from position {current_index}/{len(webcams)}")
     logging.info(f"All-time stats: processed={stats.get('total_processed', 0)} posted={stats.get('total_posted', 0)}")
 
-    if not get_ai_token():
-        logging.error("No AI token configured — AI checks will fail")
+    if not get_copilot_token():
+        logging.error("No GitHub token configured — Copilot AI checks will fail")
     else:
-        logging.info("AI token present — will attempt AI verification (subject to rate limits)")
+        logging.info("GitHub token present — will attempt AI verification with Copilot")
 
     session_processed = 0
     session_aurora_colors_found = 0
